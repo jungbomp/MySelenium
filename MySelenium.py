@@ -5,6 +5,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import ElementNotVisibleException
+import sys
 import datetime
 import csv
 
@@ -101,15 +102,30 @@ def write_log(msg, file_name):
 if __name__ == '__main__':
     USER_NAME = ''
     PASSWORD = ''
+    input_file_name = ''
+
+    if len(sys.argv) < 2:
+        print('Usage: python MySelenium.py <Input_file_name.csv> [USER_ID] [PASSWORD]')
+        exit()
+
+    if 2 == len(sys.argv):
+        input_file_name = sys.argv[1]
+
+    if 4 == len(sys.argv):
+        input_file_name = sys.argv[1]
+        USER_NAME = sys.argv[2]
+        PASSWORD = sys.argv[3]
 
     currentDT = datetime.datetime.now()
-    log_filename = currentDT.strftime("%Y%m%d_%H%M%S")
+    log_filename = currentDT.strftime("%Y%m%d_%H%M%S.log")
     print("Log file name: {0}".format(log_filename))
     
     input_data = get_input_data('Input.csv')
     login(USER_NAME, PASSWORD)
     
     linked_sku_cnt = generate_linkage(input_data)
+
+
 
     print("generated {0} links with SKU".format(linked_sku_cnt))
     write_log("generated {0} links with SKU".format(linked_sku_cnt), log_filename)
