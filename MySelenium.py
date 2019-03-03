@@ -5,13 +5,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import ElementNotVisibleException
+from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import WebDriverException
 import sys
+import os
 import datetime
 import csv
 
 
 browser = None
 log_filename = None
+result_filename = None
 
 
 def login(username_str, password_str):
@@ -55,48 +59,87 @@ def generate_linkage(data):
 
     linked_sku_cnt = 0;
 
-    for i, item in enumerate(data):
-        for j, unit in enumerate(columns):
-            if '' == item[unit]:
-                continue
+    with open(result_filename, mode='w') as out_file:
+        out_file.write('Shopify Hat and Beyond (Standard),Amazon Hat and Beyond,Amazon Hat and Beyond (version 2),Amazon Hat and Beyond (version 3),Amazon Ma Croix,Amazon Ma Croix (version 2),Amazon Ma Croix (version 3)\n')
+        for i, item in enumerate(data):
+            cnt = 6
 
-            link_url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'.format(channel_id[j], item[unit])
-            browser.get((link_url))
-            browser.execute_script("""$('a[class="link link-menu-link"]').click();""")
+            for j, unit in enumerate(columns):
+                if '' == item[unit] or 'NoListing' == item[unit]:
+                    cnt -= 1
+                    continue
 
-            # wait for transition then continue to fill items
-            try:
-                search = WebDriverWait(browser, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Search Products"]')))
-            except TimeoutException as exception:
-                write_log("Can't find {0} |{1}, {0}".format(item[unit], item['SKU']), log_filename)
-                print("Can't find {0} |{1}, {0}".format(item[unit], item['SKU']))
-                continue
-            
-            query_str = """$('input[placeholder="Search Products"]').attr("value", "SKU");"""
-            browser.execute_script(query_str.replace('SKU', item['SKU']))
-            search_btn = browser.find_element_by_css_selector('#link_product_modal_form button')
-            try:
-                search_btn.click()
-            except ElementNotVisibleException as exception:
-                write_log("Passed SKU {0} with ASIN {1} due to Unvisible Exception |{0}, {1}".format(item['SKU'], item[unit]), log_filename)
-                print("Passed SKU {0} with ASIN {1} due to Unvisible Exception |{0}, {1}".format(item['SKU'], item[unit]))
+                link_url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'.format(channel_id[j], item[unit])
+                browser.get((link_url))
 
-            # wait for transition then continue to fill items
-            try:
-                select_btn = WebDriverWait(browser, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#link-product-search-results #link_product_form button')))
-                write_log('{0} linked with {1} |{1}, {0}'.format(item[unit], item['SKU']), log_filename)
-                print('{0} linked with {1} |{1}, {0}'.format(item[unit], item['SKU']))
-                linked_sku_cnt += 1
-            except TimeoutException as exception:
-                write_log("Can't find SKU {0} in link with {1} |{0}, {1}".format(item['SKU'], item[unit]), log_filename)
-                print("Can't find SKU {0} in link with {1} |{0}, {1}".format(item['SKU'], item[unit]))
+                try:
+                    ret = browser.find_element_by_css_selector('div[class="unlinked-icon link-size-small"]')
+                except NoSuchElementException as exception:
+                    write_log("Can't find {0} |{1},{0}".format(item[unit], item['SKU']), log_filename)
+                    continue
+
+                browser.execute_script("""$('a[class="link link-menu-link"]').click();""")
+
+                # wait for transition then continue to fill items
+                try:
+                    search = WebDriverWait(browser, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Search Products"]')))
+                except TimeoutException as exception:
+                    write_log("Can't find {0} |{1},{0}".format(item[unit], item['SKU']), log_filename)
+                    continue
+                
+                query_str = """$('input[placeholder="Search Products"]').attr("value", "SKU");"""
+                browser.execute_script(query_str.replace('SKU', item['SKU']))
+                search_btn = browser.find_element_by_css_selector('#link_product_modal_form button')
+                try:
+                    search_btn.click()
+                except ElementNotVisibleException as exception:
+                    write_log("Passed SKU {0} with ASIN {1} due to Unvisible Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+                except WebDriverException as exception:
+                    write_log("Passed SKU {0} with ASIN {1} due to Other element would receive the click |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+
+                # wait for transition then continue to fill items
+                try:
+                    select_btn = WebDriverWait(browser, 3).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#link-product-search-results #link_product_form button')))
+                    select_btn.click()
+                    write_log('{0} linked with {1} |{1},{0}'.format(item[unit], item['SKU']), log_filename)
+                    item[unit] = ''
+                    linked_sku_cnt += 1
+                    cnt -= 1
+                except TimeoutException as exception:
+                    write_log("Can't find SKU {0} in link with {1} |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+                except ElementNotVisibleException as exception:
+                    write_log("Passed SKU {0} with ASIN {1} due to Unvisible Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+                except StaleElementReferenceException as exception:
+                    write_log("Passed SKU {0} with ASIN {1} due to StaleElementReference Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+
+            if 0 < cnt:
+                out_file.write(item['SKU'])
+                for unit in columns:
+                    out_file.write(',{0}'.format(item[unit]))
+                out_file.write('\n')
 
     return linked_sku_cnt
 
 
 def write_log(msg, file_name):
+    print(msg)
     with open(file_name, mode='a+') as log_file:
         log_file.write(msg+'\n')
+
+
+def run(file_name):
+    global log_filename
+    global result_filename
+
+    log_filename = '{0}.{1}.log'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
+    result_filename = '{0}.{1}.remain.csv'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
+    print("Log file name: {0}".format(log_filename))
+    print("Remain file name: {0}".format(result_filename))
+    
+    input_data = get_input_data(file_name)
+    linked_sku_cnt = generate_linkage(input_data)
+
+    return linked_sku_cnt
 
 
 if __name__ == '__main__':
@@ -117,16 +160,16 @@ if __name__ == '__main__':
         PASSWORD = sys.argv[3]
 
     currentDT = datetime.datetime.now()
-    log_filename = currentDT.strftime("%Y%m%d_%H%M%S.log")
-    print("Log file name: {0}".format(log_filename))
-    
-    input_data = get_input_data('Input.csv')
     login(USER_NAME, PASSWORD)
-    
-    linked_sku_cnt = generate_linkage(input_data)
 
+    if os.path.isdir(input_file_name):
+        files = os.listdir(input_file_name)
+        for file_name in files:
+            input_file = os.path.join(input_file_name, file_name)
+            print("Current_file: {0}".format(input_file))
+            write_log("generated {0} links with SKU".format(run(input_file)), log_filename)
+    else:
+        write_log("generated {0} links with SKU".format(run(input_file_name)), log_filename)
 
-
-    print("generated {0} links with SKU".format(linked_sku_cnt))
-    write_log("generated {0} links with SKU".format(linked_sku_cnt), log_filename)
+    browser.quit()
     
