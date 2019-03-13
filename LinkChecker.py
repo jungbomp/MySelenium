@@ -20,7 +20,10 @@ result_filename = None
 
 def login(username_str, password_str):
     global browser
-    browser = webdriver.Chrome()
+    options = webdriver.ChromeOptions()
+    options.add_argument('--ignore-certificate-errors')
+    options.add_argument('--ignore-ssl-errors')
+    browser = webdriver.Chrome(chrome_options=options)
     browser.get(('https://app.sellbrite.com/merchants/sign_in'))
 
     username = browser.find_element_by_id('user_email')
@@ -34,7 +37,7 @@ def login(username_str, password_str):
     return bLogin
 
 
-def get_input_data(filename):
+def get_input_data(filename, header):
     data = []
 
     with open(filename) as in_file:
@@ -46,30 +49,39 @@ def get_input_data(filename):
                 line_count += 1
                 continue
 
-            dic = { 'SKU': row[0], 'HAB_1': row[1], 'HAB_2': row[2], 'HAB_3': row[3], 'MC_1': row[4], 'MC_2': row[5], 'MC_3': row[6] }
+            dic = {}
+            for i, col in enumerate(header):
+                try:
+                    dic[header[i]] = row[i].strip()
+                except IndexError as error:
+                    dic[header[i]] = ''
             data.append(dic)
     
     return data
 
 
-def generate_linkage(data):
+def generate_linkage(data, labels, columns, channel_id, url):
     link_url = '';
-    channel_id = ['56358', '56358', '56358', '56020', '56020', '56020']
-    columns = ['HAB_1', 'HAB_2', 'HAB_3', 'MC_1', 'MC_2', 'MC_3']
-
     linked_sku_cnt = 0;
 
     with open(result_filename, mode='w') as out_file:
-        out_file.write('Shopify Hat and Beyond (Standard),Amazon Hat and Beyond,Amazon Hat and Beyond (version 2),Amazon Hat and Beyond (version 3),Amazon Ma Croix,Amazon Ma Croix (version 2),Amazon Ma Croix (version 3)\n')
+        for i, label in enumerate(labels):
+            if 0 < i:
+                out_file.write(",{}".format(label))
+            else:
+                out_file.write(label)
+        out_file.write('\n')
+
         for i, item in enumerate(data):
-            cnt = 6
+            cnt = len(columns)
 
             for j, unit in enumerate(columns):
                 if '' == item[unit] or 'NoListing' == item[unit]:
                     cnt -= 1
+                    item[unit] = ''
                     continue
 
-                link_url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&linked=true&utf8=%E2%9C%93'.format(channel_id[j], item[unit])
+                link_url = url.format(channel_id[j], item[unit])
                 browser.get((link_url))
 
                 try:
@@ -82,7 +94,7 @@ def generate_linkage(data):
                         continue
                     
                     browser.execute_script("""$('a[class="link unlink-menu-link"]').click();""")
-                    unlink_url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'.format(channel_id[j], item[unit])
+                    unlink_url = link_url.replace("linked=true", "unlinked=true")
                     browser.get((unlink_url))
                     ret = browser.find_element_by_css_selector('div[class="unlinked-icon link-size-small"]')
                 except NoSuchElementException as exception:
@@ -124,7 +136,6 @@ def generate_linkage(data):
                     write_log("Passed SKU {0} with ASIN {1} due to StaleElementReference Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
                 except WebDriverException as exception:
                     write_log("Passed SKU {0} with ASIN {1} due to not clickable Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
-                    
 
             if 0 < cnt:
                 out_file.write(item['SKU'])
@@ -145,15 +156,30 @@ def run(file_name):
     global log_filename
     global result_filename
 
+    # Meta data for Amazon
+    # header = ['SKU', 'HAB_1', 'HAB_2', 'HAB_3', 'MC_1', 'MC_2', 'MC_3']
+    # channel_id = ['56358', '56358', '56358', '56020', '56020', '56020']
+    # columns = ['HAB_1', 'HAB_2', 'HAB_3', 'MC_1', 'MC_2', 'MC_3']
+    # labels = ['Shopify Hat and Beyond (Standard)', 'Amazon Hat and Beyond', 'Amazon Hat and Beyond (version 2)', 'Amazon Hat and Beyond (version 3)', 'Amazon Ma Croix', 'Amazon Ma Croix (version 2)', 'Amazon Ma Croix (version 3)']
+    # url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'
+
+    # Meta data for Walmart
+    header = ['SKU', 'HAB_1', 'HAB_2', 'HAB_3', 'HAB_4', 'HAB_5']
+    channel_id = ['56021', '56021', '56021', '56021', '56021']
+    columns = ['HAB_1', 'HAB_2', 'HAB_3', 'HAB_4', 'HAB_5']
+    labels = ['Shopify Hat and Beyond (Standard)', 'Walmart Hat and Beyond', 'Walmart Hat and Beyond (version 2)', 'Walmart Hat and Beyond (version 3)', 'Walmart Hat and Beyond (version 4)', 'Walmart Hat and Beyond (version 5)']
+    url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&max_price=&min_price=&query={1}&status=&template_id=&linked=true&utf8=%E2%9C%93'
+
     log_filename = '{0}.{1}.log'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
     result_filename = '{0}.{1}.remain.csv'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
     print("Log file name: {0}".format(log_filename))
     print("Remain file name: {0}".format(result_filename))
     
-    input_data = get_input_data(file_name)
-    linked_sku_cnt = generate_linkage(input_data)
+    input_data = get_input_data(file_name, header)
+    linked_sku_cnt = generate_linkage(input_data, labels, columns, channel_id, url)
 
     return linked_sku_cnt
+
 
 
 if __name__ == '__main__':
@@ -161,17 +187,20 @@ if __name__ == '__main__':
     PASSWORD = ''
     input_file_name = ''
 
-    if len(sys.argv) < 2:
-        print('Usage: python MySelenium.py <Input_file_name.csv> [USER_ID] [PASSWORD]')
-        exit()
+    TEST = 
 
-    if 2 == len(sys.argv):
-        input_file_name = sys.argv[1]
+    if TEST != 1:
+        if len(sys.argv) < 2:
+            print('Usage: python LinkChecker.py <Input_file_name.csv> [USER_ID] [PASSWORD]')
+            exit()
 
-    if 4 == len(sys.argv):
-        input_file_name = sys.argv[1]
-        USER_NAME = sys.argv[2]
-        PASSWORD = sys.argv[3]
+        if 2 == len(sys.argv):
+            input_file_name = sys.argv[1]
+
+        if 4 == len(sys.argv):
+            input_file_name = sys.argv[1]
+            USER_NAME = sys.argv[2]
+            PASSWORD = sys.argv[3]
 
     currentDT = datetime.datetime.now()
     login(USER_NAME, PASSWORD)
@@ -186,4 +215,4 @@ if __name__ == '__main__':
         write_log("generated {0} links with SKU".format(run(input_file_name)), log_filename)
 
     browser.quit()
-    
+   
