@@ -76,31 +76,20 @@ def generate_linkage(data, labels, columns, channel_id, url):
             cnt = len(columns)
 
             for j, unit in enumerate(columns):
-                if '' == item[unit] or 'NoListing' == item[unit]:
+                if '' == item[unit] or 'NoListing' == item[unit] or item['SKU'] == item[unit]:
                     cnt -= 1
-                    item[unit] = ''
+                    #item[unit] = ''
                     continue
 
                 link_url = url.format(channel_id[j], item[unit])
                 browser.get((link_url))
 
                 try:
-                    ret = browser.find_element_by_css_selector('div[class="linked-icon link-size-small"]')
-                    sku = browser.find_element_by_css_selector('div[class="slick-cell l5 r5"]').text
-
-                    if item['SKU'] == sku:
-                        cnt -= 1
-                        item[unit] = ''
-                        continue
-                    
-                    browser.execute_script("""$('a[class="link unlink-menu-link"]').click();""")
-                    unlink_url = link_url.replace("linked=true", "unlinked=true")
-                    browser.get((unlink_url))
                     ret = browser.find_element_by_css_selector('div[class="unlinked-icon link-size-small"]')
                 except NoSuchElementException as exception:
                     write_log("Can't find {0} |{1},{0}".format(item[unit], item['SKU']), log_filename)
                     continue
-                
+
                 browser.execute_script("""$('a[class="link link-menu-link"]').click();""")
 
                 # wait for transition then continue to fill items
@@ -136,6 +125,7 @@ def generate_linkage(data, labels, columns, channel_id, url):
                     write_log("Passed SKU {0} with ASIN {1} due to StaleElementReference Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
                 except WebDriverException as exception:
                     write_log("Passed SKU {0} with ASIN {1} due to not clickable Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+                    
 
             if 0 < cnt:
                 out_file.write(item['SKU'])
@@ -168,7 +158,7 @@ def run(file_name):
     channel_id = ['56021', '56021', '56021', '56021', '56021']
     columns = ['HAB_1', 'HAB_2', 'HAB_3', 'HAB_4', 'HAB_5']
     labels = ['Shopify Hat and Beyond (Standard)', 'Walmart Hat and Beyond', 'Walmart Hat and Beyond (version 2)', 'Walmart Hat and Beyond (version 3)', 'Walmart Hat and Beyond (version 4)', 'Walmart Hat and Beyond (version 5)']
-    url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&max_price=&min_price=&query={1}&status=&template_id=&linked=true&utf8=%E2%9C%93'
+    url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'
 
     log_filename = '{0}.{1}.log'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
     result_filename = '{0}.{1}.remain.csv'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
@@ -181,17 +171,16 @@ def run(file_name):
     return linked_sku_cnt
 
 
-
 if __name__ == '__main__':
     USER_NAME = ''
     PASSWORD = ''
     input_file_name = ''
 
-    TEST = 1
+    TEST = 0
 
     if TEST != 1:
         if len(sys.argv) < 2:
-            print('Usage: python MySelenium.py <Input_file_name.csv> [USER_ID] [PASSWORD]')
+            print('Usage: python LinkCreator.py <Input_file_name.csv> [USER_ID] [PASSWORD]')
             exit()
 
         if 2 == len(sys.argv):
@@ -215,4 +204,4 @@ if __name__ == '__main__':
         write_log("generated {0} links with SKU".format(run(input_file_name)), log_filename)
 
     browser.quit()
-    
+   
