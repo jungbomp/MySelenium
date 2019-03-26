@@ -7,131 +7,173 @@ from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import ElementNotVisibleException
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.common.exceptions import WebDriverException
+from requestium import Session, Keys
+import json
+from bs4 import BeautifulSoup
 import sys
 import os
 import datetime
 import csv
+import traceback
 
 
-browser = None
+session = None
 log_filename = None
 result_filename = None
 
+meta = {
+    'amazon': {
+        'hab': 56358,
+        'mx': 56020,
+        'url': 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&utf8=%E2%9C%93'
+    },
+    'walmart': {
+        'hab': 60834,
+        'mx': 56021,
+        'url': 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&max_price=&min_price=&query={1}&status=&template_id=&utf8=%E2%9C%93'
+    },
+    'sku_url': 'https://app.sellbrite.com/inventories/by_product?page=1&page_size=100&query={0}&status=available&with_tag_ids=',
+}
 
-def login(username_str, password_str):
-    global browser
-    options = webdriver.ChromeOptions()
-    options.add_argument('--ignore-certificate-errors')
-    options.add_argument('--ignore-ssl-errors')
-    browser = webdriver.Chrome(chrome_options=options)
-    browser.get(('https://app.sellbrite.com/merchants/sign_in'))
 
-    username = browser.find_element_by_id('user_email')
+def login(username_str, password_str, show_ui):
+    global session
+    if show_ui == False:
+        session = Session('chromedriver',
+                      browser='chrome',
+                      default_timeout=15,
+                      webdriver_options={'arguments': ['headless',
+                                                       'disable-gpu',
+                                                       '--ignore-certificate-errors',
+                                                       '--ignore-ssl-errors']})
+    else:
+        session = Session('chromedriver',
+                      browser='chrome',
+                      default_timeout=15,
+                      webdriver_options={'arguments': ['disable-gpu',
+                                                       '--ignore-certificate-errors',
+                                                       '--ignore-ssl-errors']})
+
+    session.driver.get(('https://app.sellbrite.com/merchants/sign_in'))
+
+    username = session.driver.find_element_by_id('user_email')
     username.send_keys(username_str)
-    password = browser.find_element_by_id('user_password')
+    password = session.driver.find_element_by_id('user_password')
     password.send_keys(password_str)
-    nextButton = browser.find_element_by_id('clickme')
+    nextButton = session.driver.find_element_by_id('clickme')
     nextButton.click()
 
+    session.transfer_driver_cookies_to_session();
     bLogin = True
     return bLogin
 
-
-def get_input_data(filename, header):
-    data = []
-
-    with open(filename) as in_file:
-        csv_reader = csv.reader(in_file, delimiter=',')
-
-        line_count = 0;
-        for row in csv_reader:
-            if 0 == line_count:
-                line_count += 1
-                continue
-
-            dic = {}
-            for i, col in enumerate(header):
-                try:
-                    dic[header[i]] = row[i].strip()
-                except IndexError as error:
-                    dic[header[i]] = ''
-            data.append(dic)
-    
-    return data
-
-
-def generate_linkage(data, labels, columns, channel_id, url):
+def generate_linkage(filename):
     link_url = '';
     linked_sku_cnt = 0;
 
-    with open(result_filename, mode='w') as out_file:
-        for i, label in enumerate(labels):
-            if 0 < i:
-                out_file.write(",{}".format(label))
-            else:
-                out_file.write(label)
-        out_file.write('\n')
+    data = None
+    header = [{}]
+    with open(filename) as in_file:
+        with open(result_filename, mode='w') as out_file:
+            reader = csv.reader(in_file, delimiter=',')
+            for i, item in enumerate(reader):
+                if 0 == i:
+                    # Extract header information
+                    for j in range(1, len(item)):
+                        tokens = item[j].strip().split(" ")
+                        header.append({ 'market': tokens[0].strip().lower(), 'seller': tokens[1].strip().lower() })    
 
-        for i, item in enumerate(data):
-            cnt = len(columns)
-
-            for j, unit in enumerate(columns):
-                if '' == item[unit] or 'NoListing' == item[unit] or item['SKU'] == item[unit]:
-                    cnt -= 1
-                    #item[unit] = ''
+                    # Write header to output file
+                    out_file.write(item[0])
+                    for j in range(1, len(item)):
+                        out_file.write(",{}".format(item[j]))
+                    out_file.write('\n')
                     continue
+        
+                # Item section
+                cnt = len(item)-1 # Number of seller of the item
 
-                link_url = url.format(channel_id[j], item[unit])
-                browser.get((link_url))
-
+                # Retrieve SKU's product id
+                item[0] = item[0].strip()
                 try:
-                    ret = browser.find_element_by_css_selector('div[class="unlinked-icon link-size-small"]')
-                except NoSuchElementException as exception:
-                    write_log("Can't find {0} |{1},{0}".format(item[unit], item['SKU']), log_filename)
-                    continue
+                    response = session.get(meta['sku_url'].format(item[0]))
+                    res = response.json()
+                    if len(res) < 1 or 1 < len(res):
+                        if len(res) < 1:
+                            write_log("{0}. Can't find sku'id: {1}".format(i, item[0]), log_filename)
+                        else:
+                            write_log("{0}. Not unique sku id: {1}".format(i, item[0]), log_filename)
 
-                browser.execute_script("""$('a[class="link link-menu-link"]').click();""")
-
-                # wait for transition then continue to fill items
-                try:
-                    search = WebDriverWait(browser, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Search Products"]')))
-                except TimeoutException as exception:
-                    write_log("Can't find {0} |{1},{0}".format(item[unit], item['SKU']), log_filename)
-                    continue
-                
-                query_str = """$('input[placeholder="Search Products"]').attr("value", "SKU");"""
-                browser.execute_script(query_str.replace('SKU', item['SKU']))
-                search_btn = browser.find_element_by_css_selector('#link_product_modal_form button')
-                try:
-                    search_btn.click()
-                except ElementNotVisibleException as exception:
-                    write_log("Passed SKU {0} with ASIN {1} due to Unvisible Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
-                except WebDriverException as exception:
-                    write_log("Passed SKU {0} with ASIN {1} due to Other element would receive the click |{0},{1}".format(item['SKU'], item[unit]), log_filename)
-
-                # wait for transition then continue to fill items
-                try:
-                    select_btn = WebDriverWait(browser, 3).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#link-product-search-results #link_product_form button')))
-                    select_btn.click()
-                    write_log('{0} linked with {1} |{1},{0}'.format(item[unit], item['SKU']), log_filename)
-                    item[unit] = ''
-                    linked_sku_cnt += 1
-                    cnt -= 1
-                except TimeoutException as exception:
-                    write_log("Can't find SKU {0} in link with {1} |{0},{1}".format(item['SKU'], item[unit]), log_filename)
-                except ElementNotVisibleException as exception:
-                    write_log("Passed SKU {0} with ASIN {1} due to Unvisible Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
-                except StaleElementReferenceException as exception:
-                    write_log("Passed SKU {0} with ASIN {1} due to StaleElementReference Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
-                except WebDriverException as exception:
-                    write_log("Passed SKU {0} with ASIN {1} due to not clickable Exception |{0},{1}".format(item['SKU'], item[unit]), log_filename)
+                        out_file.write(item[0])
+                        for j in range(1, len(item)):
+                            out_file.write(',{0}'.format(item[j]))
+                        out_file.write('\n')
+                        continue
                     
+                    sku_id = res[0]['product_id'];
+                    write_log('{0}. SKU id: {1} ({2})'.format(i, item[0], sku_id), log_filename)
+                except json.decoder.JSONDecodeError as error:
+                    write_log("Login fail! please check the ID and Password.", log_filename)
+                    return linked_sku_cnt
 
-            if 0 < cnt:
-                out_file.write(item['SKU'])
-                for unit in columns:
-                    out_file.write(',{0}'.format(item[unit]))
-                out_file.write('\n')
+                for j in range(1, len(item)):
+                    # Skip empty or invalid code
+                    item[j] = item[j].strip()
+                    if '' == item[j] or 'NoListing' == item[j]:
+                        cnt -= 1
+                        item[j] = ''
+                        continue
+
+                    market = header[j]['market'] # Market of the seller
+                    seller = header[j]['seller'] # Select seller
+
+                    # Retrieve product id from listing
+                    try:
+                        listing_url = meta[market]['url'].format(meta[market][seller], item[j])
+                        response = session.get(listing_url)
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        res = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
+                        if len(res) < 1:
+                            write_log("{0}-{1}. Can't find listing item'id: {2}".format(i, j, item[j]), log_filename)
+                            continue
+                        if 1 < len(res):
+                            write_log("{0}-{1}. Not unique listing item id: {2}".format(i, j, item[j]), log_filename)
+                            continue
+                        data_key = json.loads(res[0]['data-key'])
+                        origin_id = data_key['id']
+                        write_log("{0}-{1}. Origin: {2} ({3})".format(i, j, item[j], origin_id), log_filename)
+                    except KeyError as error:
+                        write_log("Error! {0}-{1}. Invalid header : {2}".format(i, j, error.args[0]), log_filename)
+                        return 0
+
+                    # Generate link
+                    query_str = """return (function() {
+                                            let ret = '';
+                                            $.ajax({type: 'POST',
+                                                url: "https://app.sellbrite.com/api/listings/link_product",
+                                                data: { 'id': 'origin_id', 'product_id': 'sku_id' },
+                                                success: function(result) {
+                                                    ret = result.linked;
+                                                },
+                                                async: false
+                                            });
+                                            return ret;
+                                        })();"""
+                    try:
+                        link_ret = session.driver.execute_script(query_str.replace('origin_id', str(origin_id)).replace('sku_id', str(sku_id)))
+                        if link_ret == True:
+                            write_log('{0}-{1}. Generated link between {2} and {3}'.format(i, j, item[0], item[j]), log_filename)
+                            cnt -= 1
+                            item[j] = ''
+                            linked_sku_cnt += 1
+                    except TimeoutException as exception:
+                        write_log('{0}-{1}. Timeout with linking {2} and {3}'.format(i, j, item[0], item[j]), log_filename)
+
+                if 0 < cnt:
+                    out_file.write(item[0])
+                    for j in range(1, len(item)):
+                        out_file.write(',{0}'.format(item[j]))
+                    out_file.write('\n')
 
     return linked_sku_cnt
 
@@ -146,28 +188,20 @@ def run(file_name):
     global log_filename
     global result_filename
 
-    # Meta data for Amazon
-    # header = ['SKU', 'HAB_1', 'HAB_2', 'HAB_3', 'MC_1', 'MC_2', 'MC_3']
-    # channel_id = ['56358', '56358', '56358', '56020', '56020', '56020']
-    # columns = ['HAB_1', 'HAB_2', 'HAB_3', 'MC_1', 'MC_2', 'MC_3']
-    # labels = ['Shopify Hat and Beyond (Standard)', 'Amazon Hat and Beyond', 'Amazon Hat and Beyond (version 2)', 'Amazon Hat and Beyond (version 3)', 'Amazon Ma Croix', 'Amazon Ma Croix (version 2)', 'Amazon Ma Croix (version 3)']
-    # url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'
-
-    # Meta data for Walmart
-    header = ['SKU', 'HAB_1', 'HAB_2', 'HAB_3', 'HAB_4', 'HAB_5']
-    channel_id = ['56021', '56021', '56021', '56021', '56021']
-    columns = ['HAB_1', 'HAB_2', 'HAB_3', 'HAB_4', 'HAB_5']
-    labels = ['Shopify Hat and Beyond (Standard)', 'Walmart Hat and Beyond', 'Walmart Hat and Beyond (version 2)', 'Walmart Hat and Beyond (version 3)', 'Walmart Hat and Beyond (version 4)', 'Walmart Hat and Beyond (version 5)']
-    url = 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&max_price=&min_price=&query={1}&status=&template_id=&unlinked=true&utf8=%E2%9C%93'
-
     log_filename = '{0}.{1}.log'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
     result_filename = '{0}.{1}.remain.csv'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
     print("Log file name: {0}".format(log_filename))
     print("Remain file name: {0}".format(result_filename))
-    
-    input_data = get_input_data(file_name, header)
-    linked_sku_cnt = generate_linkage(input_data, labels, columns, channel_id, url)
 
+    write_log('Start with input file: {0}'.format(file_name), log_filename)
+    
+    linked_sku_cnt = 0
+
+    try:
+        linked_sku_cnt = generate_linkage(file_name)
+    except FileNotFoundError as error:
+        write_log('{0}: {1}'.format(error.filename, error.strerror), log_filename)
+    
     return linked_sku_cnt
 
 
@@ -175,33 +209,35 @@ if __name__ == '__main__':
     USER_NAME = ''
     PASSWORD = ''
     input_file_name = ''
+    SHOW_BROWSER = False
 
     TEST = 0
 
     if TEST != 1:
-        if len(sys.argv) < 2:
-            print('Usage: python LinkCreator.py <Input_file_name.csv> [USER_ID] [PASSWORD]')
+        if len(sys.argv) < 4:
+            print('Usage: python LinkCreator.py <Input_file_name.csv> [USER_ID] [PASSWORD] [0/1:SHOW_BROWSER]')
             exit()
 
-        if 2 == len(sys.argv):
-            input_file_name = sys.argv[1]
-
-        if 4 == len(sys.argv):
-            input_file_name = sys.argv[1]
-            USER_NAME = sys.argv[2]
-            PASSWORD = sys.argv[3]
+        input_file_name = sys.argv[1]
+        USER_NAME = sys.argv[2]
+        PASSWORD = sys.argv[3]
+        try:
+            SHOW_BROWSER = True if sys.argv[4] == '1' else False
+        except IndexError as error:
+            SHOW_BROWSER = False
 
     currentDT = datetime.datetime.now()
-    login(USER_NAME, PASSWORD)
-
-    if os.path.isdir(input_file_name):
-        files = os.listdir(input_file_name)
-        for file_name in files:
-            input_file = os.path.join(input_file_name, file_name)
-            print("Current_file: {0}".format(input_file))
-            write_log("generated {0} links with SKU".format(run(input_file)), log_filename)
-    else:
-        write_log("generated {0} links with SKU".format(run(input_file_name)), log_filename)
-
-    browser.quit()
-   
+    login(USER_NAME, PASSWORD, SHOW_BROWSER)
+    
+    try:
+        if os.path.isdir(input_file_name):
+            files = os.listdir(input_file_name)
+            for file_name in files:
+                input_file = os.path.join(input_file_name, file_name)
+                write_log("generated {0} links from input file {1}".format(run(input_file), input_file), log_filename)
+        else:
+            write_log("generated {0} links from input file {1}".format(run(input_file_name), input_file_name), log_filename)
+    except Exception as exception:
+        traceback.print_exc()
+    finally:
+        session.driver.quit()
