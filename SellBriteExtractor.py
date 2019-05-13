@@ -70,18 +70,21 @@ def login(username_str, password_str, show_ui):
 def extract_inventory():
     all_product = []
 
-    page = 1
+    page = 0
     while True:
+        page = page + 1
         response = session.get('https://app.sellbrite.com/products?advancedOptions=false&page={0}&page_size=100'.format(page))
+        # response = session.get('https://app.sellbrite.com/products?advancedOptions=false&page=1&page_size=100&query=M92Lqj4PVLgDAlyn')
+        
         res = response.json()
         if len(res) == 0:
             break
         all_product = all_product + res
-        page = page + 1
 
     if len(all_product) == 0:
         return
 
+    ids = {}
     products = []
     images = []
     for i, product in enumerate(all_product):
@@ -100,35 +103,51 @@ def extract_inventory():
             "PRODUCT_FEATURE3": product["features"][2] if 2 < len(product["features"]) else None,
             "PRODUCT_FEATURE4": product["features"][3] if 3 < len(product["features"]) else None,
             "PRODUCT_FEATURE5": product["features"][4] if 4 < len(product["features"]) else None })
+        
+        ids[product["id"]] = product["sku"]
 
         if product["images"] != None:
             for j, img_link in enumerate(product["images"]):
                 images.append({ "STD_SKU": product["sku"], "IMAGE_PATH": img_link })
 
-        response = session.get('https://app.sellbrite.com/products/{}/product_variations'.format(product["id"]))
-        res = response.json()
-        for variation in res["variations"]:
-            products.append({ "STD_SKU": variation["sku"],
-                "PARENT_STD_SKU": product["sku"],
-                "PRODUCT_BRAND": variation["brand"],
-                "PRODUCT_NAME": variation["name"],
-                "PRODUCT_SIZE": variation["variation_fields"]["Size"] if "Size" in variation["variation_fields"] else None,
-                "PRODUCT_COLOR": variation["variation_fields"]["Color"] if "Color" in variation["variation_fields"] else None,
-                "PRODUCT_DESIGNS": variation["variation_fields"]["Designs"] if "Designs" in variation["variation_fields"] else None,
-                "PRODUCT_QTY": variation["inventory"],
-                "PRODUCT_PRICE": variation["price"],
-                "PRODUCT_DESCRIPTION": variation["description"],
-                "PRODUCT_FEATURE1": variation["features"][0] if 0 < len(variation["features"]) else None,
-                "PRODUCT_FEATURE2": variation["features"][1] if 1 < len(variation["features"]) else None,
-                "PRODUCT_FEATURE3": variation["features"][2] if 2 < len(variation["features"]) else None,
-                "PRODUCT_FEATURE4": variation["features"][3] if 3 < len(variation["features"]) else None,
-                "PRODUCT_FEATURE5": variation["features"][4] if 4 < len(variation["features"]) else None })
+        page = 0
+        cnt = 0
+        while True:
+            page = page + 1
+            response = session.get('https://app.sellbrite.com/products/{0}/product_variations?page={1}'.format(product["id"], page))
+            res = response.json()
+            if len(res["variations"]) < 1:
+                break
 
-            if variation["images"] != None:
-                for j, img_link in enumerate(variation["images"]):
-                    images.append({ "STD_SKU": variation["sku"], "IMAGE_PATH": img_link })
+            for variation in res["variations"]:
+                products.append({ "STD_SKU": variation["sku"],
+                    "PARENT_STD_SKU": product["sku"],
+                    "PRODUCT_BRAND": variation["brand"],
+                    "PRODUCT_NAME": variation["name"],
+                    "PRODUCT_SIZE": variation["variation_fields"]["Size"] if "Size" in variation["variation_fields"] else None,
+                    "PRODUCT_COLOR": variation["variation_fields"]["Color"] if "Color" in variation["variation_fields"] else None,
+                    "PRODUCT_DESIGNS": variation["variation_fields"]["Designs"] if "Designs" in variation["variation_fields"] else None,
+                    "PRODUCT_QTY": variation["inventory"],
+                    "PRODUCT_PRICE": variation["price"],
+                    "PRODUCT_DESCRIPTION": variation["description"],
+                    "PRODUCT_FEATURE1": variation["features"][0] if 0 < len(variation["features"]) else None,
+                    "PRODUCT_FEATURE2": variation["features"][1] if 1 < len(variation["features"]) else None,
+                    "PRODUCT_FEATURE3": variation["features"][2] if 2 < len(variation["features"]) else None,
+                    "PRODUCT_FEATURE4": variation["features"][3] if 3 < len(variation["features"]) else None,
+                    "PRODUCT_FEATURE5": variation["features"][4] if 4 < len(variation["features"]) else None })
 
-    with open('inventory_products.{1}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='') as csvfile:
+                ids[variation["id"]] = variation["sku"]
+                
+                if variation["images"] != None:
+                    for j, img_link in enumerate(variation["images"]):
+                        images.append({ "STD_SKU": variation["sku"], "IMAGE_PATH": img_link })
+
+                cnt = cnt + 1
+            
+            if int(res["product"]["variation_count"]) == cnt:
+                break
+
+    with open('inventory_products.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='') as csvfile:
         fieldnames = list(products[0].keys())
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
@@ -143,6 +162,136 @@ def extract_inventory():
         writer.writeheader()
         for img in images:
             writer.writerow(img)
+    
+    return ids
+
+def extract_listing(ids):
+    response = session.get('https://app.sellbrite.com/api/products/listable_channels')
+    listing_channel = response.json()
+
+    linked_products = []
+    unlinked_products = []
+    for channel in listing_channel:
+    # with open(result_filename, mode='w') as out_file:
+        pageNum = 0
+        while True:
+            try:
+                pageNum = pageNum + 1
+                listing_url = 'https://app.sellbrite.com/channels/{0}?page={1}&status=Active'.format(channel['id'], pageNum)
+                response = session.get(listing_url)
+                soup = BeautifulSoup(response.text, 'html.parser')
+
+                if channel['display_name'].lower() == 'shopify':
+                    items = soup.find('table', class_='LMT-table').find('tbody').find_all('tr')
+
+                    if len(items) < 1:
+                        break
+
+                    product_name = ''
+                    for item in items:
+                        if item.attrs['class'][0] == 'LMT-listing-row':
+                            product_name = item.find('td', class_='LMT-table-title').find('a').text.strip('\n ')
+                            continue
+
+                        product = {
+                            "LISTING_MARKET_ID": 1,
+                            "LISTING_SKU": item.find('td', class_='LMT-table-sku').text.strip('\n '),
+                            "LISTING_PRODUCT_NAME": product_name,
+                            "LISTING_PRODUCT_QTY": item.find('td', attrs={"title":"Quantity"}).text.strip('\n '),
+                            "LISTING_PRODUCT_PRICE": item.find('td', attrs={"title":"Price"}).text.strip('\n $'),
+                            "LISTING_PRODUCT_FBM": 'Y'
+                        }
+
+                        if item.find('a', class_='link').attrs['href'] != None:
+                            linkstr = item.find('a', class_='link').attrs['href']
+
+                            try:
+                                product["STD_SKU"] = ids[int(linkstr[linkstr.find('/', 2)+1:linkstr.rfind('/')])]
+                            except KeyError as error:
+                                response = session.get('https://app.sellbrite.com'+linkstr)
+                                soup = BeautifulSoup(response.text, 'html.parser')
+                                product["STD_SKU"] = soup.find('input', class_='form-control', attrs={'name': 'product[sku]'}).attrs['value']
+                                
+                            linked_products.append(product)
+                        else:
+                            unlinked_products.append(product)
+                elif channel['display_name'].lower() == 'ebay':
+                    items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
+                    if len(items) < 1:
+                        break
+
+                    parent = None
+                    for i in range(len(items)-1, -1, -1):
+                        item = items[i]
+                        data_key = json.loads(item['data-key'])
+                        if 'id' in data_key and data_key['id'] == parent:
+                            parent = None
+                            continue
+
+                        parent = data_key['parent']
+                        product = {
+                            "LISTING_MARKET_ID": 1,
+                            "LISTING_SKU": item.find('td', attrs={"data-key":"sku"}).text.strip('\n '),
+                            "LISTING_PRODUCT_NAME": item.find('td', attrs={"data-key":"title"}).find('a').text.strip('\n '),
+                            "LISTING_PRODUCT_QTY": item.find('td', attrs={"data-key":"quantity"}).text.strip('\n '),
+                            "LISTING_PRODUCT_PRICE": item.find('td', attrs={"data-key":"buy_it_now"}).text.strip('\n $'),
+                            "LISTING_PRODUCT_FBM": 'Y'
+                        }
+
+                        if item.find('td', attrs={'data-key': 'icon'}).find('div', class_='linked-icon') != None:
+                            linkstr = item.find('td', attrs={'data-key': 'icon'}).find('a', class_='link').attrs['href']
+                            
+                            try:
+                                product["STD_SKU"] = ids[int(linkstr[linkstr.find('/', 2)+1:linkstr.rfind('/')])]
+                            except KeyError as error:
+                                response = session.get('https://app.sellbrite.com'+linkstr)
+                                soup = BeautifulSoup(response.text, 'html.parser')
+                                product["STD_SKU"] = soup.find('input', class_='form-control', attrs={'name': 'product[sku]'}).attrs['value']
+                                
+                            linked_products.append(product)
+                        else:
+                            unlinked_products.append(product)
+                else: # 'Walmart', 'Amazon'
+                    items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
+
+                    if len(items) < 1:
+                        break
+
+                    for item in items:
+                        product = {
+                            "LISTING_MARKET_ID": 1,
+                            "LISTING_PRODUCT_NAME": item.find('td', attrs={"data-key":"title"}).find('a').text.strip('\n '),
+                            "LISTING_PRODUCT_QTY": item.find('td', attrs={"data-key":"quantity"}).text.strip('\n '),
+                            "LISTING_PRODUCT_PRICE": item.find('td', attrs={"data-key":"price"}).text.strip('\n $'),
+                        }
+
+                        try:
+                            product["LISTING_SKU"] = item.find('td', attrs={'data-key': 'item_id'}).text.strip('\n ')
+                        except AttributeError as error:
+                            product["LISTING_SKU"] = item.find('td', attrs={'data-key': 'listing_ref'}).text.strip('\n ')
+
+                        try:
+                            product["LISTING_PRODUCT_FBM"] = 'Y' if item.find('td', attrs={'data-key':'fulfilled_by'}).text.strip('\n ').lower() == 'merchant' else 'N'
+                        except AttributeError as error:
+                            product["LISTING_PRODUCT_FBM"] = 'Y'
+
+                        if item.find('td', attrs={'data-key': 'icon'}).find('div', class_='linked-icon') != None:
+                            linkstr = item.find('td', attrs={'data-key': 'icon'}).find('a', class_='link').attrs['href']
+                            
+                            try:
+                                product["STD_SKU"] = ids[int(linkstr[linkstr.find('/', 2)+1:linkstr.rfind('/')])]
+                            except KeyError as error:
+                                response = session.get('https://app.sellbrite.com'+linkstr)
+                                soup = BeautifulSoup(response.text, 'html.parser')
+                                product["STD_SKU"] = soup.find('input', class_='form-control', attrs={'name': 'product[sku]'}).attrs['value']
+                                
+                            linked_products.append(product)
+                        else:
+                            unlinked_products.append(product)
+            except Exception as exception:
+                traceback.print_exc()
+
+    return linked_products, unlinked_products
 
 
 def write_log(msg, file_name):
@@ -166,7 +315,12 @@ def run(file_name):
     linked_sku_cnt = 0
 
     try:
-        linked_sku_cnt = extract_inventory(file_name)
+        ids = extract_inventory()
+        linked_listing, unlinked_listing = extract_listing(ids)
+
+        print(ids)
+        print(linked_listing)
+        print(unlinked_listing)
     except FileNotFoundError as error:
         write_log('{0}: {1}'.format(error.filename, error.strerror), log_filename)
     
