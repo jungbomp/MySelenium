@@ -147,7 +147,7 @@ def extract_inventory():
             if int(res["product"]["variation_count"]) == cnt:
                 break
 
-    with open('inventory_products.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='') as csvfile:
+    with open('inventory_products.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
         fieldnames = list(products[0].keys())
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
@@ -155,7 +155,7 @@ def extract_inventory():
         for product in products:
             writer.writerow(product)
 
-    with open('images.{1}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='') as csvfile:
+    with open('images.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
         fieldnames = ['STD_SKU', 'IMAGE_PATH']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
@@ -317,6 +317,22 @@ def run(file_name):
     try:
         ids = extract_inventory()
         linked_listing, unlinked_listing = extract_listing(ids)
+
+        with open('linked_listing.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
+            fieldnames = list(linked_listing[0].keys())
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for listing in linked_listing:
+                writer.writerow(listing)
+
+        with open('unlinked_listing.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
+            fieldnames = list(unlinked_listing[0].keys())
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for listing in unlinked_listing:
+                writer.writerow(listing)
 
         print(ids)
         print(linked_listing)
