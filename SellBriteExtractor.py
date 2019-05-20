@@ -16,26 +16,12 @@ import datetime
 import csv
 import traceback
 
-import pymysql.cursors
+# import pymysql.cursors
 
 
 session = None
 log_filename = None
 result_filename = None
-
-meta = {
-    'amazon': {
-        'hab': 56358,
-        'mx': 56020,
-        'url': 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&fb_merchant=true&max_price=&min_price=&query={1}&status=&template_id=&utf8=%E2%9C%93'
-    },
-    'walmart': {
-        'hab': 60834,
-        'mx': 56021,
-        'url': 'https://app.sellbrite.com/channels/{0}?action=filter&channel_id={0}&controller=listings&max_price=&min_price=&query={1}&status=&template_id=&utf8=%E2%9C%93'
-    },
-    'sku_url': 'https://app.sellbrite.com/inventories/by_product?page=1&page_size=100&query={0}&status=available&with_tag_ids=',
-}
 
 
 def login(username_str, password_str, show_ui):
@@ -231,7 +217,7 @@ def extract_listing(ids, market_meta):
 
                         parent = data_key['parent']
                         product = {
-                            "LISTING_MARKET_ID": 1,
+                            "LISTING_MARKET_ID": market['MARKET_ID'],
                             "LISTING_SKU": item.find('td', attrs={"data-key":"sku"}).text.strip('\n '),
                             "LISTING_PRODUCT_NAME": item.find('td', attrs={"data-key":"title"}).find('a').text.strip('\n '),
                             "LISTING_PRODUCT_QTY": item.find('td', attrs={"data-key":"quantity"}).text.strip('\n '),
@@ -260,7 +246,7 @@ def extract_listing(ids, market_meta):
 
                     for item in items:
                         product = {
-                            "LISTING_MARKET_ID": 1,
+                            "LISTING_MARKET_ID": market['MARKET_ID'],
                             "LISTING_PRODUCT_NAME": item.find('td', attrs={"data-key":"title"}).find('a').text.strip('\n '),
                             "LISTING_PRODUCT_QTY": item.find('td', attrs={"data-key":"quantity"}).text.strip('\n '),
                             "LISTING_PRODUCT_PRICE": item.find('td', attrs={"data-key":"price"}).text.strip('\n $'),
@@ -379,8 +365,6 @@ def run(file_name):
             writer.writeheader()
             for listing in unlinked_listing:
                 writer.writerow(listing)
-
-        
 
         print(ids)
         print(linked_listing)
