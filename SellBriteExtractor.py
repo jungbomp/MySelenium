@@ -16,6 +16,8 @@ import datetime
 import csv
 import traceback
 
+import pymysql.cursors
+
 
 session = None
 log_filename = None
@@ -165,23 +167,22 @@ def extract_inventory():
     
     return ids
 
-def extract_listing(ids):
+def extract_listing(ids, market_meta):
     response = session.get('https://app.sellbrite.com/api/products/listable_channels')
-    listing_channel = response.json()
-
+    
     linked_products = []
     unlinked_products = []
-    for channel in listing_channel:
+    for market in market_meta:
     # with open(result_filename, mode='w') as out_file:
         pageNum = 0
         while True:
             try:
                 pageNum = pageNum + 1
-                listing_url = 'https://app.sellbrite.com/channels/{0}?page={1}&status=Active'.format(channel['id'], pageNum)
+                listing_url = 'https://app.sellbrite.com/channels/{0}?page={1}&status=Active'.format(market['LISTING_ID'], pageNum)
                 response = session.get(listing_url)
                 soup = BeautifulSoup(response.text, 'html.parser')
 
-                if channel['display_name'].lower() == 'shopify':
+                if market['CHANNEL_NM'].lower() == 'shopify':
                     items = soup.find('table', class_='LMT-table').find('tbody').find_all('tr')
 
                     if len(items) < 1:
@@ -194,7 +195,7 @@ def extract_listing(ids):
                             continue
 
                         product = {
-                            "LISTING_MARKET_ID": 1,
+                            "LISTING_MARKET_ID": market['MARKET_ID'],
                             "LISTING_SKU": item.find('td', class_='LMT-table-sku').text.strip('\n '),
                             "LISTING_PRODUCT_NAME": product_name,
                             "LISTING_PRODUCT_QTY": item.find('td', attrs={"title":"Quantity"}).text.strip('\n '),
@@ -215,7 +216,7 @@ def extract_listing(ids):
                             linked_products.append(product)
                         else:
                             unlinked_products.append(product)
-                elif channel['display_name'].lower() == 'ebay':
+                elif market['CHANNEL_NM'].lower() == 'ebay':
                     items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
                     if len(items) < 1:
                         break
@@ -313,10 +314,55 @@ def run(file_name):
     # write_log('Start with input file: {0}'.format(file_name), log_filename)
     
     linked_sku_cnt = 0
+    
+    market_meta = [
+        {
+            'MARKET_ID': 1,
+            'CHANNEL_NM': 'Amazon',
+            'BRAND_NM': 'Hat and Beyond',
+            'LISTING_ID': 56358
+        },
+        {
+            'MARKET_ID': 2,
+            'CHANNEL_NM': 'Walmart',
+            'BRAND_NM': 'Hat and Beyond',
+            'LISTING_ID': 60834
+        },
+        {
+            'MARKET_ID': 3,
+            'CHANNEL_NM': 'Shopify',
+            'BRAND_NM': 'Hat and Beyond',
+            'LISTING_ID': 55978
+        },
+        {
+            'MARKET_ID': 4,
+            'CHANNEL_NM': 'Amazon',
+            'BRAND_NM': 'Ma Croix',
+            'LISTING_ID': 56020
+        },
+        {
+            'MARKET_ID': 5,
+            'CHANNEL_NM': 'eBay',
+            'BRAND_NM': 'Ma Croix',
+            'LISTING_ID': 56244
+        },
+        {
+            'MARKET_ID': 6,
+            'CHANNEL_NM': 'Walmart',
+            'BRAND_NM': 'Ma Croix',
+            'LISTING_ID': 56021
+        },
+        {
+            'MARKET_ID': 7,
+            'CHANNEL_NM': 'eBay',
+            'BRAND_NM': 'Skyhigh',
+            'LISTING_ID': 55979
+        }
+    ]
 
     try:
         ids = extract_inventory()
-        linked_listing, unlinked_listing = extract_listing(ids)
+        linked_listing, unlinked_listing = extract_listing(ids, market_meta)
 
         with open('linked_listing.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
             fieldnames = list(linked_listing[0].keys())
@@ -333,6 +379,8 @@ def run(file_name):
             writer.writeheader()
             for listing in unlinked_listing:
                 writer.writerow(listing)
+
+        
 
         print(ids)
         print(linked_listing)
