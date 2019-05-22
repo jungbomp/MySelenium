@@ -21,7 +21,8 @@ import pymysql.cursors
 
 session = None
 log_filename = None
-result_filename = None
+currentDT = None
+currentDT_str = None
 
 
 def login(username_str, password_str, show_ui):
@@ -64,10 +65,12 @@ def openConnection():
                              connect_timeout=5,
                              charset='utf8',
                              cursorclass=pymysql.cursors.DictCursor)
+
+    write_log('MySql DB connection success!.', log_filename)
     return connection
 
 
-def extract_inventory():
+def extract_inventory(inventory_dic, image_dic):
     all_product = []
 
     page = 0
@@ -80,7 +83,7 @@ def extract_inventory():
         if len(res) == 0:
             break
         all_product = all_product + res
-
+        
     if len(all_product) == 0:
         return
 
@@ -97,6 +100,7 @@ def extract_inventory():
             "PRODUCT_DESIGN": None,
             "PRODUCT_QTY": None,
             "PRODUCT_PRICE": product["price"],
+            "ID": product["id"],
             # "PRODUCT_DESCRIPTION": product["description"],
             # "PRODUCT_FEATURE1": product["features"][0] if 0 < len(product["features"]) else None,
             # "PRODUCT_FEATURE2": product["features"][1] if 1 < len(product["features"]) else None,
@@ -109,7 +113,7 @@ def extract_inventory():
 
         if product["images"] != None:
             for j, img_link in enumerate(product["images"]):
-                images.append({ "STD_SKU": product["sku"], "IMAGE_PATH": img_link })
+                images.append({ "SKU": product["sku"], "IMAGE_PATH": img_link, "IMAGE_SOURCE": 1 })
 
         page = 0
         cnt = 0
@@ -130,6 +134,7 @@ def extract_inventory():
                     "PRODUCT_DESIGN": variation["variation_fields"]["Designs"] if "Designs" in variation["variation_fields"] else None,
                     "PRODUCT_QTY": variation["inventory"],
                     "PRODUCT_PRICE": variation["price"],
+                    "ID": variation["id"],
                     # "PRODUCT_DESCRIPTION": variation["description"],
                     # "PRODUCT_FEATURE1": variation["features"][0] if 0 < len(variation["features"]) else None,
                     # "PRODUCT_FEATURE2": variation["features"][1] if 1 < len(variation["features"]) else None,
@@ -142,14 +147,44 @@ def extract_inventory():
                 
                 if variation["images"] != None:
                     for j, img_link in enumerate(variation["images"]):
-                        images.append({ "STD_SKU": variation["sku"], "IMAGE_PATH": img_link })
+                        images.append({ "SKU": variation["sku"], "IMAGE_PATH": img_link, "IMAGE_SOURCE": 1 })
 
                 cnt = cnt + 1
             
             if int(res["product"]["variation_count"]) == cnt:
                 break
 
-    return products, images, ids
+    res = { 'PRODUCTS': [], 'IMAGES': [], 'IDS': ids}
+    for product in products:
+        key_str = product['STD_SKU'] + '#'
+        if key_str not in inventory_dic:
+            res['PRODUCTS'].append(product)
+            continue
+
+        is_same = True
+        for attribute in product:
+            if 'ID' == attribute:
+                continue
+
+            if product[attribute] != inventory_dic[key_str][attribute]:
+                res['PRODUCTS'].append(product)
+                break
+
+    for image in images:
+        key_str = ''
+        for key in ['SKU', 'IMAGE_PATH']:
+            key_str = key_str + str(image[key]) + '#'
+
+        if key_str not in image_dic:
+            res['IMAGES'].append(image)
+            continue
+
+        for attribute in image:
+            if image[attribute] != image_dic[key_str][attribute]:
+                res['IMAGES'].append(image)
+                break
+
+    return res
 
 
 def extract_shopify_listing_product_from_tr_ele(tr_ele, ids):
@@ -306,7 +341,7 @@ def extract_Sears_listing_product_from_tr_ele(tr_ele, ids):
         return product, False
 
 
-def extract_listing(ids, market):
+def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
     linked_products = []
     unlinked_products = []
     pageNum = 0
@@ -391,7 +426,50 @@ def extract_listing(ids, market):
         except Exception as exception:
             traceback.print_exc()
 
-    return linked_products, unlinked_products
+    res = { 'LISTING': [], 'UNLINK_LISTING': [] }
+    for item in linked_products:
+        key_str = ''
+        for key in ['LISTING_ITEM_ID', 'STD_SKU', 'MARKET_ID']:
+            key_str = key_str + str(item[key]) + '#'
+
+        if key_str not in listing_dic:
+            res['LISTING'].append(item)
+            continue
+
+        for attribute in item:
+            if str(item[attribute]) != str(listing_dic[key_str][attribute]):
+                res['LISTING'].append(item)
+                break
+
+    for item in unlinked_products:
+        key_str = ''
+        for key in ['LISTING_ITEM_ID', 'MARKET_ID']:
+            key_str = key_str + str(item[key]) + '#'
+
+        if key_str not in unlinked_listing_dic:
+            res['UNLINK_LISTING'].append(item)
+            continue
+
+        for attribute in item:
+            if str(item[attribute]) != str(unlinked_listing_dic[key_str][attribute]):
+                res['UNLINK_LISTING'].append(item)
+                break
+
+    return res
+
+
+def retrieve_market_from_db(conn):
+    market_data = []
+    with conn.cursor() as cursor:
+        # Read a single record
+        sql = "SELECT `MARKET_ID`\
+                    , `CHANNEL_NM`\
+                    , `BRAND_NM`\
+                    , `LISTING_MARKET_ID`\
+                 FROM `MARKET`"
+        cursor.execute(sql, ())
+        market_meta = cursor.fetchall()
+    return market_meta
 
 
 def update_inventory_to_db(inventory, conn):
@@ -423,7 +501,7 @@ def update_inventory_to_db(inventory, conn):
                         product['PRODUCT_PRICE']))
                 except pymysql.IntegrityError as error:
                     sql = "UPDATE `INVENTORY`\
-                            SET `PARENT_STD_SKU` = %s\
+                              SET `PARENT_STD_SKU` = %s\
                                 , `PRODUCT_BRAND`  = %s\
                                 , `PRODUCT_NAME`   = %s\
                                 , `PRODUCT_SIZE`   = %s\
@@ -446,40 +524,62 @@ def update_inventory_to_db(inventory, conn):
         cursor.close()
 
 
+def retrieve_inventory_from_db(conn):
+    inventory_data = []
+    with conn.cursor() as cursor:
+        sql = "SELECT `STD_SKU`\
+                    , `PARENT_STD_SKU`\
+                    , `PRODUCT_BRAND`\
+                    , `PRODUCT_NAME`\
+                    , `PRODUCT_SIZE`\
+                    , `PRODUCT_COLOR`\
+                    , `PRODUCT_DESIGN`\
+                    , `PRODUCT_QTY`\
+                    , `PRODUCT_PRICE`\
+                FROM `INVENTORY`"
+        cursor.execute(sql, ())
+        inventory_data = cursor.fetchall()
+    return inventory_data
+
+
 def update_images_to_db(images, conn):
     conn.begin()
     with conn.cursor() as cursor:
         for image in images:
             try:
-                sql = "SELECT `IMAGE_ID`\
-                         FROM `IMAGE`\
-                        WHERE `SKU`          = %s\
-                          AND `IMAGE_PATH`   = %s\
-                          AND `IMAGE_SOURCE` = 1"
-                cursor.execute(sql, (image['STD_SKU'], image['IMAGE_PATH']))
-                image_id = cursor.fetchall()
-                if 0 < len(image_id):
-                    continue
-                        
                 sql = "INSERT INTO `IMAGE` (\
                               `IMAGE_ID`\
                             , `SKU`\
                             , `IMAGE_PATH`\
-                            , `IMAGE_SOURCE`)\
-                        VALUES (\
-                                (SELECT `IMAGE_ID`\
-                                    FROM (SELECT IFNULL(MAX(`IMAGE_ID`), 0) + 1 AS `IMAGE_ID`\
-                                            FROM `IMAGE`) AS `MAX_ID`)\
+                            , `IMAGE_SOURCE`\
+                     ) VALUES (\
+                              (SELECT `IMAGE_ID`\
+                                 FROM (SELECT IFNULL(MAX(`IMAGE_ID`), 0) + 1 AS `IMAGE_ID`\
+                                         FROM `IMAGE`) AS `MAX_ID`)\
                             , %s\
                             , %s\
-                            , 1)"
+                            , %s)"
                 cursor.execute(sql, (\
-                    image['STD_SKU'], \
-                    image['IMAGE_PATH']))
+                    image['SKU'], \
+                    image['IMAGE_PATH'], \
+                    image['IMAGE_SOURCE']))
             except pymysql.IntegrityError as error:
                 print(error)
         conn.commit()
         cursor.close()
+
+
+def retrieve_image_from_db(conn):
+    image_data = []
+    with conn.cursor() as cursor:
+        sql = "SELECT `IMAGE_ID`\
+                    , `SKU`\
+                    , `IMAGE_PATH`\
+                    , `IMAGE_SOURCE`\
+                FROM `IMAGE`"
+        cursor.execute(sql, ())
+        image_data = cursor.fetchall()
+    return image_data
 
 
 def update_listing_to_db(listing, conn):
@@ -509,7 +609,7 @@ def update_listing_to_db(listing, conn):
                         item['LISTING_PRODUCT_FBM']))
                 except pymysql.IntegrityError as error:
                     sql = "UPDATE `LISTING`\
-                              SET `LISTING_SKU`           = %S\
+                              SET `LISTING_SKU`           = %s\
                                 , `LISTING_PRODUCT_NAME`  = %s\
                                 , `LISTING_PRODUCT_QTY`   = %s\
                                 , `LISTING_PRODUCT_PRICE` = %s\
@@ -528,6 +628,24 @@ def update_listing_to_db(listing, conn):
                         item['MARKET_ID']))
         conn.commit()
         cursor.close()
+
+
+def retrieve_listing_from_db(conn, market_id):
+    listing_data = []
+    with conn.cursor() as cursor:
+        sql = "SELECT `LISTING_ITEM_ID`\
+                    , `STD_SKU`\
+                    , `MARKET_ID`\
+                    , `LISTING_SKU`\
+                    , `LISTING_PRODUCT_NAME`\
+                    , `LISTING_PRODUCT_QTY`\
+                    , `LISTING_PRODUCT_PRICE`\
+                    , `LISTING_PRODUCT_FBM`\
+                 FROM `LISTING`\
+                WHERE `MARKET_ID` = %s"
+        cursor.execute(sql, (market_id))
+        listing_data = cursor.fetchall()
+    return listing_data
 
 
 def update_unlink_listing_to_db(listing, conn):
@@ -572,6 +690,46 @@ def update_unlink_listing_to_db(listing, conn):
                         item['MARKET_ID']))
         conn.commit()
         cursor.close()
+
+
+def retrieve_unlink_listing_from_db(conn, market_id):
+    unlink_listing_data = []
+    with conn.cursor() as cursor:
+        sql = "SELECT `LISTING_ITEM_ID`\
+                    , `MARKET_ID`\
+                    , `LISTING_SKU`\
+                    , `LISTING_PRODUCT_NAME`\
+                    , `LISTING_PRODUCT_QTY`\
+                    , `LISTING_PRODUCT_PRICE`\
+                    , `LISTING_PRODUCT_FBM`\
+                 FROM `UNLINK_LISTING`\
+                WHERE `MARKET_ID` = %s"
+        cursor.execute(sql, (market_id))
+        unlink_listing_data = cursor.fetchall()
+    return unlink_listing_data
+
+
+def list_to_dic(keys, data):
+    dic = {}
+    for item in data:
+        key_str = ''
+        for key in keys:
+            key_str = key_str + str(item[key]) + '#'
+        dic[key_str] = item
+    return dic
+
+
+def list_to_list_dic(keys, data):
+    dic = {}
+    for item in data:
+        key_str = ''
+        for key in keys:
+            key_str = key_str + str(item[key]) + '#'
+
+        if key_str not in dic:
+            dic[key_str] = []
+        
+        dic[key_str].append(item)
         
 
 def write_log(msg, file_name):
@@ -680,82 +838,74 @@ def read_from_file():
 
 
 def run(file_name):
-    global log_filename
-    global result_filename
-
-    # log_filename = '{0}.{1}.log'.format(file_name.replace('.csv', ''), currentDT.strftime("%Y%m%d_%H%M%S"))
-    
-    result_filename = 'products.{1}.csv'.format('ret', currentDT.strftime("%Y%m%d_%H%M%S"))
-    # print("Log file name: {0}".format(log_filename))
-    print("Remain file name: {0}".format(result_filename))
-
-    # write_log('Start with input file: {0}'.format(file_name), log_filename)
-    
-    linked_sku_cnt = 0
-
     try:
         conn = openConnection()
-        with conn.cursor() as cursor:
-            # Read a single record
-            sql = "SELECT `MARKET_ID`, `CHANNEL_NM`, `BRAND_NM`, `LISTING_MARKET_ID` FROM `MARKET`"
-            cursor.execute(sql, ())
-            market_meta = cursor.fetchall()
+        market_data = retrieve_market_from_db(conn)
+        inventory_dic = list_to_dic(['STD_SKU'], retrieve_inventory_from_db(conn))
+        image_dic = list_to_dic(['SKU', 'IMAGE_PATH'], retrieve_image_from_db(conn))
 
-        products, images, ids = extract_inventory()
-        if 0 < len(products):
-            update_inventory_to_db(products, conn)
-            update_images_to_db(images, conn)
+        write_log('Extracting inventory data...', log_filename)
+        prev_datetime = datetime.datetime.now()
+        inventory_data = extract_inventory(inventory_dic, image_dic)
+        write_log('Extracted {0} inventory data and {1} image data'.format(len(inventory_data['PRODUCTS']), len(inventory_data['IMAGES'])), log_filename)
+        write_log('Duration time: {0}'.format(datetime.datetime.now()-prev_datetime), log_filename)
+        # if 0 < len(inventory_data['PRODUCTS']):
+        #     with open('inventory_products.{0}.csv'.format(currentDT_str), 'w', newline='', encoding='UTF8') as csvfile:
+        #         fieldnames = list(inventory_data['PRODUCTS'][0].keys())
+        #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
-            with open('inventory_products.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
-                fieldnames = list(products[0].keys())
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        #         writer.writeheader()
+        #         for product in inventory_data['PRODUCTS']:
+        #             writer.writerow(product)
 
-                writer.writeheader()
-                for product in products:
-                    writer.writerow(product)
+        # if 0 < len(inventory_data['IMAGES']):
+        #     with open('images.{0}.csv'.format(currentDT_str), 'w', newline='', encoding='UTF8') as csvfile:
+        #         fieldnames = list(inventory_data['IMAGES'][0].keys())
+        #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
-            with open('images.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
-                fieldnames = ['STD_SKU', 'IMAGE_PATH']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        #         writer.writeheader()
+        #         for img in inventory_data['IMAGES']:
+        #             writer.writerow(img)
 
-                writer.writeheader()
-                for img in images:
-                    writer.writerow(img)
+        write_log('Update inventory data to DB...', log_filename)
+        update_inventory_to_db(inventory_data['PRODUCTS'], conn)
+        update_images_to_db(inventory_data['IMAGES'], conn)
 
-            for market in market_meta:
-                # if market['LISTING_MARKET_ID'] == 62179:
-                #     continue
-                if market['MARKET_ID'] in [8]:
-                    continue
-                linked_listing, unlinked_listing = extract_listing(ids, market)
-                if 0 < len(linked_listing):
-                    update_listing_to_db(linked_listing, conn)
+        for market in market_data:
+            listing_dic = list_to_dic(['LISTING_ITEM_ID', 'STD_SKU', 'MARKET_ID'], retrieve_listing_from_db(conn, market['MARKET_ID']))
+            unlink_listing_dic = list_to_dic(['LISTING_ITEM_ID', 'MARKET_ID'], retrieve_unlink_listing_from_db(conn, market['MARKET_ID']))
 
-                    with open('linked_listing.{0}.{1}.{2}.csv'.format(market['CHANNEL_NM'], market['BRAND_NM'], currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
-                        fieldnames = list(linked_listing[0].keys())
-                        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            prev_datetime = datetime.datetime.now()
+            write_log("Extracting listing data of {0} from {1}...".format(market['CHANNEL_NM'], market['BRAND_NM']), log_filename)
+            listing_data = extract_listing(inventory_data['IDS'], market, listing_dic, unlink_listing_dic)
+            write_log('Extracted {0} listing data and {1} unlinked listing data'.format(len(listing_data['LISTING']), len(listing_data['UNLINK_LISTING'])), log_filename)
+            write_log('Duration time: {0}'.format(datetime.datetime.now()-prev_datetime), log_filename)
+            # if 0 < len(listing_data['LISTING']):
+            #     with open('linked_listing.{0}.{1}.{2}.csv'.format(market['CHANNEL_NM'], market['BRAND_NM'], currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
+            #         fieldnames = list(listing_data['LISTING'][0].keys())
+            #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
-                        writer.writeheader()
-                        for listing in linked_listing:
-                            writer.writerow(listing)
-                
-                if 0 < len(unlinked_listing):
-                    update_unlink_listing_to_db(unlinked_listing, conn)
+            #         writer.writeheader()
+            #         for listing in listing_data['LISTING']:
+            #             writer.writerow(listing)
+            
+            # if 0 < len(listing_data['UNLINK_LISTING']):
+            #     with open('unlinked_listing.{0}.{1}.{2}.csv'.format(market['CHANNEL_NM'], market['BRAND_NM'], currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
+            #         fieldnames = list(listing_data['UNLINK_LISTING'][0].keys())
+            #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
-                    with open('unlinked_listing.{0}.{1}.{2}.csv'.format(market['CHANNEL_NM'], market['BRAND_NM'], currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
-                        fieldnames = list(unlinked_listing[0].keys())
-                        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            #         writer.writeheader()
+            #         for listing in listing_data['UNLINK_LISTING']:
+            #             writer.writerow(listing)
 
-                        writer.writeheader()
-                        for listing in unlinked_listing:
-                            writer.writerow(listing)
+            write_log("Update listing data of {0} from {1} to DB...".format(market['CHANNEL_NM'], market['BRAND_NM']), log_filename)
+            update_listing_to_db(listing_data['LISTING'], conn)
+            update_unlink_listing_to_db(listing_data['UNLINK_LISTING'], conn)
     except FileNotFoundError as error:
         write_log('{0}: {1}'.format(error.filename, error.strerror), log_filename)
     finally:
         conn.close()
     
-    return linked_sku_cnt
-
 
 if __name__ == '__main__':
     # read_from_file()
@@ -779,8 +929,14 @@ if __name__ == '__main__':
         except IndexError as error:
             SHOW_BROWSER = False
 
-    currentDT = datetime.datetime.now()
     login(USER_NAME, PASSWORD, SHOW_BROWSER)
+    currentDT = datetime.datetime.now()
+    currentDT_str = currentDT.strftime("%Y%m%d_%H%M%S")
+
+    log_filename = 'SellBriteExtractor_{0}.log'.format(currentDT_str)
+    print("Log file name: {0}".format(log_filename))
+
+    write_log("Start SellBrite Extraction on {0}".format(currentDT), log_filename)
     
     try:
         if os.path.isdir(input_file_name):
@@ -794,3 +950,7 @@ if __name__ == '__main__':
         traceback.print_exc()
     finally:
         session.driver.quit()
+
+    write_log("Finish SellBrite Extraction on {0}".format(datetime.datetime.now()), log_filename)
+    write_log("Total Duration Time: {0}".format(datetime.datetime.now()-currentDT), log_filename)
+    
