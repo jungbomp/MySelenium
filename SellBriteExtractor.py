@@ -58,10 +58,10 @@ def login(username_str, password_str, show_ui):
 
 
 def openConnection():
-    connection = pymysql.connect(host='localhost',
-                             user='app',
+    connection = pymysql.connect(host='hatandbeyond-inven.ckocudrb3cns.us-west-1.rds.amazonaws.com',
+                             user='HatAndBeyond',
                              password='HatAndBeyond123!',
-                             db='hdb',
+                             db='HDB',
                              connect_timeout=5,
                              charset='utf8',
                              cursorclass=pymysql.cursors.DictCursor)
@@ -93,7 +93,7 @@ def extract_inventory(inventory_dic, image_dic):
     for i, product in enumerate(all_product):
         products.append({ "STD_SKU": product["sku"],
             "PARENT_STD_SKU": None,
-            "PRODUCT_BRAND": product["brand"],
+            "PRODUCT_SUPPLIER": product["brand"],
             "PRODUCT_NAME": product["name"],
             "PRODUCT_SIZE": None,
             "PRODUCT_COLOR": None,
@@ -127,7 +127,7 @@ def extract_inventory(inventory_dic, image_dic):
             for variation in res["variations"]:
                 products.append({ "STD_SKU": variation["sku"],
                     "PARENT_STD_SKU": product["sku"],
-                    "PRODUCT_BRAND": variation["brand"],
+                    "PRODUCT_SUPPLIER": variation["brand"],
                     "PRODUCT_NAME": variation["name"],
                     "PRODUCT_SIZE": variation["variation_fields"]["Size"] if "Size" in variation["variation_fields"] else None,
                     "PRODUCT_COLOR": variation["variation_fields"]["Color"] if "Color" in variation["variation_fields"] else None,
@@ -153,6 +153,9 @@ def extract_inventory(inventory_dic, image_dic):
             
             if int(res["product"]["variation_count"]) == cnt:
                 break
+
+            break
+        break
 
     res = { 'PRODUCTS': [], 'IMAGES': [], 'IDS': ids}
     for product in products:
@@ -351,11 +354,11 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
             items = []
 
             pageNum = pageNum + 1
-            listing_url = 'https://app.sellbrite.com/channels/{0}?page={1}&status=Active'.format(market['LISTING_MARKET_ID'], pageNum)
+            listing_url = 'https://app.sellbrite.com/channels/{0}?page={1}&status=Active'.format(market['SELLBRITE_LISTING_MARKET_ID'], pageNum)
             response = session.get(listing_url)
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            if market['CHANNEL_NM'].lower() == 'shopify':
+            if market['CHANNEL_NAME'].lower() == 'shopify':
                 items = soup.find('table', class_='LMT-table').find('tbody').find_all('tr')
                 product_name = ''
                 for item in items:
@@ -371,7 +374,7 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
                         linked_products.append(product)
                     else:
                         unlinked_products.append(product)
-            elif market['CHANNEL_NM'].lower() == 'ebay':
+            elif market['CHANNEL_NAME'].lower() == 'ebay':
                 items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
                 parent = None
                 for i in range(len(items)-1, -1, -1):
@@ -389,7 +392,7 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
                         linked_products.append(product)
                     else:
                         unlinked_products.append(product)
-            elif market['CHANNEL_NM'].lower() == 'walmart':
+            elif market['CHANNEL_NAME'].lower() == 'walmart':
                 items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
                 for item in items:
                     product, isLinked = extract_Walmart_listing_product_from_tr_ele(item, ids)
@@ -399,7 +402,7 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
                         linked_products.append(product)
                     else:
                         unlinked_products.append(product)
-            elif market['CHANNEL_NM'].lower() == 'amazon':
+            elif market['CHANNEL_NAME'].lower() == 'amazon':
                 items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
                 for item in items:
                     product, isLinked = extract_Amazon_listing_product_from_tr_ele(item, ids)
@@ -409,7 +412,7 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
                         linked_products.append(product)
                     else:
                         unlinked_products.append(product)
-            elif market['CHANNEL_NM'].lower() == 'sears':
+            elif market['CHANNEL_NAME'].lower() == 'sears':
                 items = soup.find('table', class_='LMT-table').find('tbody').find_all('tr')
                 for item in items:
                     product, isLinked = extract_Sears_listing_product_from_tr_ele(item, ids)
@@ -422,6 +425,7 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
 
             if len(items) < 1:
                 break
+            break
             
         except Exception as exception:
             traceback.print_exc()
@@ -463,9 +467,9 @@ def retrieve_market_from_db(conn):
     with conn.cursor() as cursor:
         # Read a single record
         sql = "SELECT `MARKET_ID`\
-                    , `CHANNEL_NM`\
-                    , `BRAND_NM`\
-                    , `LISTING_MARKET_ID`\
+                    , `CHANNEL_NAME`\
+                    , `BRAND_NAME`\
+                    , `SELLBRITE_LISTING_MARKET_ID`\
                  FROM `MARKET`"
         cursor.execute(sql, ())
         market_meta = cursor.fetchall()
@@ -481,7 +485,7 @@ def update_inventory_to_db(inventory, conn):
                     sql = "INSERT INTO `INVENTORY` (\
                                   `STD_SKU`\
                                 , `PARENT_STD_SKU`\
-                                , `PRODUCT_BRAND`\
+                                , `PRODUCT_SUPPLIER`\
                                 , `PRODUCT_NAME`\
                                 , `PRODUCT_SIZE`\
                                 , `PRODUCT_COLOR`\
@@ -492,7 +496,7 @@ def update_inventory_to_db(inventory, conn):
                     cursor.execute(sql, (\
                         product['STD_SKU'], \
                         product['PARENT_STD_SKU'], \
-                        product['PRODUCT_BRAND'], \
+                        product['PRODUCT_SUPPLIER'], \
                         product['PRODUCT_NAME'], \
                         product['PRODUCT_SIZE'], \
                         product['PRODUCT_COLOR'], \
@@ -501,18 +505,18 @@ def update_inventory_to_db(inventory, conn):
                         product['PRODUCT_PRICE']))
                 except pymysql.IntegrityError as error:
                     sql = "UPDATE `INVENTORY`\
-                              SET `PARENT_STD_SKU` = %s\
-                                , `PRODUCT_BRAND`  = %s\
-                                , `PRODUCT_NAME`   = %s\
-                                , `PRODUCT_SIZE`   = %s\
-                                , `PRODUCT_COLOR`  = %s\
-                                , `PRODUCT_DESIGN` = %s\
-                                , `PRODUCT_QTY`    = %s\
-                                , `PRODUCT_PRICE`  = %s\
-                            WHERE `STD_SKU`        = %s"
+                              SET `PARENT_STD_SKU`   = %s\
+                                , `PRODUCT_SUPPLIER` = %s\
+                                , `PRODUCT_NAME`     = %s\
+                                , `PRODUCT_SIZE`     = %s\
+                                , `PRODUCT_COLOR`    = %s\
+                                , `PRODUCT_DESIGN`   = %s\
+                                , `PRODUCT_QTY`      = %s\
+                                , `PRODUCT_PRICE`    = %s\
+                            WHERE `STD_SKU`          = %s"
                     cursor.execute(sql, ( \
                         product['PARENT_STD_SKU'], \
-                        product['PRODUCT_BRAND'], \
+                        product['PRODUCT_SUPPLIER'], \
                         product['PRODUCT_NAME'], \
                         product['PRODUCT_SIZE'], \
                         product['PRODUCT_COLOR'], \
@@ -529,7 +533,7 @@ def retrieve_inventory_from_db(conn):
     with conn.cursor() as cursor:
         sql = "SELECT `STD_SKU`\
                     , `PARENT_STD_SKU`\
-                    , `PRODUCT_BRAND`\
+                    , `PRODUCT_SUPPLIER`\
                     , `PRODUCT_NAME`\
                     , `PRODUCT_SIZE`\
                     , `PRODUCT_COLOR`\
@@ -876,7 +880,7 @@ def run(file_name):
             unlink_listing_dic = list_to_dic(['LISTING_ITEM_ID', 'MARKET_ID'], retrieve_unlink_listing_from_db(conn, market['MARKET_ID']))
 
             prev_datetime = datetime.datetime.now()
-            write_log("Extracting listing data of {0} from {1}...".format(market['CHANNEL_NM'], market['BRAND_NM']), log_filename)
+            write_log("Extracting listing data of {0} from {1}...".format(market['CHANNEL_NAME'], market['BRAND_NAME']), log_filename)
             listing_data = extract_listing(inventory_data['IDS'], market, listing_dic, unlink_listing_dic)
             write_log('Extracted {0} listing data and {1} unlinked listing data'.format(len(listing_data['LISTING']), len(listing_data['UNLINK_LISTING'])), log_filename)
             write_log('Duration time: {0}'.format(datetime.datetime.now()-prev_datetime), log_filename)
@@ -898,7 +902,7 @@ def run(file_name):
             #         for listing in listing_data['UNLINK_LISTING']:
             #             writer.writerow(listing)
 
-            write_log("Update listing data of {0} from {1} to DB...".format(market['CHANNEL_NM'], market['BRAND_NM']), log_filename)
+            write_log("Update listing data of {0} from {1} to DB...".format(market['CHANNEL_NAME'], market['BRAND_NAME']), log_filename)
             update_listing_to_db(listing_data['LISTING'], conn)
             update_unlink_listing_to_db(listing_data['UNLINK_LISTING'], conn)
     except FileNotFoundError as error:
