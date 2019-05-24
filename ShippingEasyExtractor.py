@@ -28,10 +28,10 @@ currentDT = None
 
 
 def openConnection():
-    connection = pymysql.connect(host='localhost',
-                             user='app',
+    connection = pymysql.connect(host='hatandbeyond-inven.ckocudrb3cns.us-west-1.rds.amazonaws.com',
+                             user='HatAndBeyond',
                              password='HatAndBeyond123!',
-                             db='hdb',
+                             db='HDB',
                              connect_timeout=5,
                              charset='utf8',
                              cursorclass=pymysql.cursors.DictCursor)
@@ -189,7 +189,7 @@ def get_channel_from_market_str(market_meta, market_str):
         channel = 'manual'
 
     for market in market_meta:
-        if -1 < market['CHANNEL_NM'].lower().find(channel) and -1 < market['BRAND_NM'].lower().find(brand):
+        if -1 < market['CHANNEL_NAME'].lower().find(channel) and -1 < market['BRAND_NAME'].lower().find(brand):
             return market['MARKET_ID']
 
     return 99 # manual order
@@ -214,7 +214,7 @@ def run(file_name):
         conn = openConnection()
         with conn.cursor() as cursor:
             # Read a single record
-            sql = "SELECT `MARKET_ID`, `CHANNEL_NM`, `BRAND_NM`, `LISTING_MARKET_ID` FROM `MARKET`"
+            sql = "SELECT `MARKET_ID`, `CHANNEL_NAME`, `BRAND_NAME`, `SELLBRITE_LISTING_MARKET_ID` FROM `MARKET`"
             cursor.execute(sql, ())
             market_meta = cursor.fetchall()
 
@@ -291,22 +291,6 @@ def run(file_name):
                 
                 conn.commit()
                 cursor.close()
-
-            with open('orders.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
-                fieldnames = list(orders[0].keys())
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-                writer.writeheader()
-                for order in orders:
-                    writer.writerow(order)
-
-        with open('order_items.{0}.csv'.format(currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
-            fieldnames = list(order_items[0].keys())
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-            writer.writeheader()
-            for order_item in order_items:
-                writer.writerow(order_item)
 
         print(orders)
         print(order_items)
