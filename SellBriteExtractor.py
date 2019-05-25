@@ -154,9 +154,6 @@ def extract_inventory(inventory_dic, image_dic):
             if int(res["product"]["variation_count"]) == cnt:
                 break
 
-            break
-        break
-
     res = { 'PRODUCTS': [], 'IMAGES': [], 'IDS': ids}
     for product in products:
         key_str = product['STD_SKU'] + '#'
@@ -443,7 +440,6 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
 
             if len(items) < 1:
                 break
-            break
             
         except Exception as exception:
             traceback.print_exc()
