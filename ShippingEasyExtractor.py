@@ -23,8 +23,8 @@ import pymysql.cursors
 
 session = None
 log_filename = None
-result_filename = None
 currentDT = None
+currentDT_str = None
 
 
 def openConnection():
@@ -35,6 +35,8 @@ def openConnection():
                              connect_timeout=5,
                              charset='utf8',
                              cursorclass=pymysql.cursors.DictCursor)
+
+    write_log('MySql DB connection success!.', log_filename)
     return connection
 
 
@@ -74,6 +76,7 @@ def extract_orders(market_meta):
     orders = []
     order_item = []
     pageNum = 0
+    time_out_cnt = 0
     while True:
         try:
             session.transfer_driver_cookies_to_session()
@@ -82,7 +85,7 @@ def extract_orders(market_meta):
             response = session.get(order_url)
             session.driver.get(order_url)
             try:
-                table_ele = WebDriverWait(session.driver, 10).until(EC.presence_of_element_located((By.XPATH, "//table[@class='se-table instant-rate-enabled orders']")))
+                table_ele = WebDriverWait(session.driver, 20).until(EC.presence_of_element_located((By.XPATH, "//table[@class='se-table instant-rate-enabled orders']")))
                 print("Page is ready!")
 
                 tr_eles = table_ele.find_element_by_tag_name('tbody').find_elements_by_tag_name('tr')
@@ -133,6 +136,7 @@ def extract_orders(market_meta):
                         })
             except TimeoutException:
                 print("Loading took too much time!")
+                break
         except Exception as exception:
             traceback.print_exc()
             break
@@ -201,15 +205,7 @@ def write_log(msg, file_name):
         log_file.write(msg+'\n')
 
 
-def run(file_name):
-    global log_filename
-    global result_filename
-    global currentDT
-
-    log_filename = 'ShippingEasyExtraction_{0}.log'.format(currentDT.strftime("%Y%m%d_%H%M%S"))
-    
-    linked_sku_cnt = 0
-
+def run():
     try:
         conn = openConnection()
         with conn.cursor() as cursor:
@@ -218,7 +214,11 @@ def run(file_name):
             cursor.execute(sql, ())
             market_meta = cursor.fetchall()
 
+        write_log('Extracting order data...', log_filename)
+        prev_datetime = datetime.datetime.now()
         orders, order_items = extract_orders(market_meta)
+        write_log('Extracted {0} order data and {1} order item data'.format(len(orders), len(order_items)), log_filename)
+        write_log('Duration time: {0}'.format(datetime.datetime.now()-prev_datetime), log_filename)
 
         if 0 < len(orders):
             write_log('Insert order data to database.', log_filename)
@@ -292,50 +292,48 @@ def run(file_name):
                 conn.commit()
                 cursor.close()
 
-        print(orders)
-        print(order_items)
     except FileNotFoundError as error:
         write_log('{0}: {1}'.format(error.filename, error.strerror), log_filename)
     finally:
         conn.close()
-    
-    return linked_sku_cnt
 
 
 if __name__ == '__main__':
     USER_NAME = 'jcsky.jaik@gmail.com'
     PASSWORD = 'Happy10*'
-    input_file_name = ''
-    SHOW_BROWSER = True
+    SHOW_BROWSER = False
 
     TEST = 1
 
     if TEST != 1:
-        if len(sys.argv) < 4:
-            print('Usage: python LinkCreator.py <Input_file_name.csv> [USER_ID] [PASSWORD] [0/1:SHOW_BROWSER]')
+        if len(sys.argv) < 3:
+            print('Usage: python SippingEasyExtractor.py [USER_ID] [PASSWORD] [0/1:SHOW_BROWSER]')
             exit()
 
-        input_file_name = sys.argv[1]
-        USER_NAME = sys.argv[2]
-        PASSWORD = sys.argv[3]
+        USER_NAME = sys.argv[1]
+        PASSWORD = sys.argv[2]
         try:
-            SHOW_BROWSER = True if sys.argv[4] == '1' else False
+            SHOW_BROWSER = True if sys.argv[3] == '1' else False
         except IndexError as error:
             SHOW_BROWSER = False
 
     currentDT = datetime.datetime.now()
 
     login(USER_NAME, PASSWORD, SHOW_BROWSER)
+    currentDT = datetime.datetime.now()
+    currentDT_str = currentDT.strftime("%Y%m%d_%H%M%S")
+
+    log_filename = './log/ShippingEasyExctrator_{0}.log'.format(currentDT_str)
+    print("Log file name: {0}".format(log_filename))
+
+    write_log("Start Shipping Extraction on {0}".format(currentDT), log_filename)
     
     try:
-        if os.path.isdir(input_file_name):
-            files = os.listdir(input_file_name)
-            for file_name in files:
-                input_file = os.path.join(input_file_name, file_name)
-                write_log("generated {0} links from input file {1}".format(run(input_file), input_file), log_filename)
-        else:
-            write_log("generated {0} links from input file {1}".format(run(input_file_name), input_file_name), log_filename)
+        run()
     except Exception as exception:
         traceback.print_exc()
     finally:
         session.driver.quit()
+
+    write_log("Finish ShippingEasy Extraction on {0}".format(datetime.datetime.now()), log_filename)
+    write_log("Total Duration Time: {0}".format(datetime.datetime.now()-currentDT), log_filename)
