@@ -98,7 +98,7 @@ def extract_inventory(inventory_dic, image_dic):
             "PRODUCT_SIZE": None,
             "PRODUCT_COLOR": None,
             "PRODUCT_DESIGN": None,
-            "PRODUCT_QTY": None,
+            "PRODUCT_QTY": 0,
             "PRODUCT_PRICE": product["price"],
             "ID": product["id"],
             # "PRODUCT_DESCRIPTION": product["description"],
@@ -132,7 +132,7 @@ def extract_inventory(inventory_dic, image_dic):
                     "PRODUCT_SIZE": variation["variation_fields"]["Size"] if "Size" in variation["variation_fields"] else None,
                     "PRODUCT_COLOR": variation["variation_fields"]["Color"] if "Color" in variation["variation_fields"] else None,
                     "PRODUCT_DESIGN": variation["variation_fields"]["Designs"] if "Designs" in variation["variation_fields"] else None,
-                    "PRODUCT_QTY": variation["inventory"],
+                    "PRODUCT_QTY": 0 if variation["inventory"] == None else variation["inventory"],
                     "PRODUCT_PRICE": variation["price"],
                     "ID": variation["id"],
                     # "PRODUCT_DESCRIPTION": variation["description"],
@@ -201,9 +201,13 @@ def extract_shopify_listing_product_from_tr_ele(tr_ele, ids):
 
     if 0 == len(product['LISTING_PRODUCT_QTY']):
         product['LISTING_PRODUCT_QTY'] = 0
+    else:
+        product['LISTING_PRODUCT_QTY'] = int(product['LISTING_PRODUCT_QTY'])
 
     if 0 == len(product['LISTING_PRODUCT_PRICE']):
-        product['LISTING_PRODUCT_PRICE'] = 0
+        product['LISTING_PRODUCT_PRICE'] = 0.0
+    else:
+        product['LISTING_PRODUCT_PRICE'] = float(product['LISTING_PRODUCT_PRICE'])
 
     if tr_ele.find('div', class_='linked-icon') != None:
         linkstr = tr_ele.find('a', class_='link').attrs['href']
@@ -232,9 +236,13 @@ def extract_ebay_listing_product_from_tr_ele(tr_ele, ids):
 
     if 0 == len(product['LISTING_PRODUCT_QTY']):
         product['LISTING_PRODUCT_QTY'] = 0
+    else:
+        product['LISTING_PRODUCT_QTY'] = int(product['LISTING_PRODUCT_QTY'])
 
     if 0 == len(product['LISTING_PRODUCT_PRICE']):
-        product['LISTING_PRODUCT_PRICE'] = 0
+        product['LISTING_PRODUCT_PRICE'] = 0.0
+    else:
+        product['LISTING_PRODUCT_PRICE'] = float(product['LISTING_PRODUCT_PRICE'])
 
     if tr_ele.find('td', attrs={'data-key': 'icon'}).find('div', class_='linked-icon') != None:
         linkstr = tr_ele.find('td', attrs={'data-key': 'icon'}).find('a', class_='link').attrs['href']
@@ -260,9 +268,13 @@ def extract_Walmart_listing_product_from_tr_ele(tr_ele, ids):
 
     if 0 == len(product['LISTING_PRODUCT_QTY']):
         product['LISTING_PRODUCT_QTY'] = 0
+    else:
+        product['LISTING_PRODUCT_QTY'] = int(product['LISTING_PRODUCT_QTY'])
 
     if 0 == len(product['LISTING_PRODUCT_PRICE']):
-        product['LISTING_PRODUCT_PRICE'] = 0
+        product['LISTING_PRODUCT_PRICE'] = 0.0
+    else:
+        product['LISTING_PRODUCT_PRICE'] = float(product['LISTING_PRODUCT_PRICE'])
 
     product["LISTING_ITEM_ID"] = tr_ele.find('td', attrs={'data-key': 'listing_ref'}).text.strip('\n ')
     product["LISTING_SKU"] = tr_ele.find('td', attrs={'data-key': 'sku'}).text.strip('\n ')
@@ -292,9 +304,13 @@ def extract_Amazon_listing_product_from_tr_ele(tr_ele, ids):
 
     if 0 == len(product['LISTING_PRODUCT_QTY']):
         product['LISTING_PRODUCT_QTY'] = 0
+    else:
+        product['LISTING_PRODUCT_QTY'] = int(product['LISTING_PRODUCT_QTY'])
 
     if 0 == len(product['LISTING_PRODUCT_PRICE']):
-        product['LISTING_PRODUCT_PRICE'] = 0
+        product['LISTING_PRODUCT_PRICE'] = 0.0
+    else:
+        product['LISTING_PRODUCT_PRICE'] = float(product['LISTING_PRODUCT_PRICE'])
 
     product["LISTING_ITEM_ID"] = tr_ele.find('td', attrs={'data-key': 'item_id'}).text.strip('\n ')
     product["LISTING_SKU"] = tr_ele.find('td', attrs={'data-key': 'sku'}).text.strip('\n ')
@@ -319,11 +335,13 @@ def extract_Sears_listing_product_from_tr_ele(tr_ele, ids):
     product = {
         "LISTING_PRODUCT_NAME": tr_ele.find('td', class_='LMT-table-title').text.strip('\n '),
         "LISTING_PRODUCT_QTY": tr_ele.find('td', attrs={"title":"Available Quantity"}).find('span').text.strip('\n '),
-        "LISTING_PRODUCT_PRICE": 0,
+        "LISTING_PRODUCT_PRICE": 0.0,
     }
 
     if 0 == len(product['LISTING_PRODUCT_QTY']):
         product['LISTING_PRODUCT_QTY'] = 0
+    else:
+        product['LISTING_PRODUCT_QTY'] = int(product['LISTING_PRODUCT_QTY'])
 
     product["LISTING_ITEM_ID"] = tr_ele.find('td', class_='LMT-table-sku').text.strip('\n ')
     product["LISTING_SKU"] = tr_ele.find('td', class_='LMT-table-sku').text.strip('\n ')
@@ -841,7 +859,7 @@ def read_from_file():
         conn.close()
 
 
-def run(file_name):
+def run():
     try:
         conn = openConnection()
         market_data = retrieve_market_from_db(conn)
@@ -853,7 +871,11 @@ def run(file_name):
         inventory_data = extract_inventory(inventory_dic, image_dic)
         write_log('Extracted {0} inventory data and {1} image data'.format(len(inventory_data['PRODUCTS']), len(inventory_data['IMAGES'])), log_filename)
         write_log('Duration time: {0}'.format(datetime.datetime.now()-prev_datetime), log_filename)
-        # if 0 < len(inventory_data['PRODUCTS']):
+        if 0 < len(inventory_data['PRODUCTS']):
+            write_log('Update inventory data to DB...', log_filename)
+            update_inventory_to_db(inventory_data['PRODUCTS'], conn)
+            write_log(str(inventory_data['PRODUCTS']), log_filename)
+
         #     with open('inventory_products.{0}.csv'.format(currentDT_str), 'w', newline='', encoding='UTF8') as csvfile:
         #         fieldnames = list(inventory_data['PRODUCTS'][0].keys())
         #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -862,7 +884,10 @@ def run(file_name):
         #         for product in inventory_data['PRODUCTS']:
         #             writer.writerow(product)
 
-        # if 0 < len(inventory_data['IMAGES']):
+        if 0 < len(inventory_data['IMAGES']):
+            write_log('Update image data to DB...', log_filename)
+            update_images_to_db(inventory_data['IMAGES'], conn)
+            write_log(str(inventory_data['IMAGES']), log_filename)
         #     with open('images.{0}.csv'.format(currentDT_str), 'w', newline='', encoding='UTF8') as csvfile:
         #         fieldnames = list(inventory_data['IMAGES'][0].keys())
         #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -870,10 +895,6 @@ def run(file_name):
         #         writer.writeheader()
         #         for img in inventory_data['IMAGES']:
         #             writer.writerow(img)
-
-        write_log('Update inventory data to DB...', log_filename)
-        update_inventory_to_db(inventory_data['PRODUCTS'], conn)
-        update_images_to_db(inventory_data['IMAGES'], conn)
 
         for market in market_data:
             listing_dic = list_to_dic(['LISTING_ITEM_ID', 'STD_SKU', 'MARKET_ID'], retrieve_listing_from_db(conn, market['MARKET_ID']))
@@ -884,7 +905,11 @@ def run(file_name):
             listing_data = extract_listing(inventory_data['IDS'], market, listing_dic, unlink_listing_dic)
             write_log('Extracted {0} listing data and {1} unlinked listing data'.format(len(listing_data['LISTING']), len(listing_data['UNLINK_LISTING'])), log_filename)
             write_log('Duration time: {0}'.format(datetime.datetime.now()-prev_datetime), log_filename)
-            # if 0 < len(listing_data['LISTING']):
+            if 0 < len(listing_data['LISTING']):
+                write_log("Update listing data of {0} from {1} to DB...".format(market['CHANNEL_NAME'], market['BRAND_NAME']), log_filename)
+                update_listing_to_db(listing_data['LISTING'], conn)
+                write_log(str(listing_data['LISTING']), log_filename)
+                
             #     with open('linked_listing.{0}.{1}.{2}.csv'.format(market['CHANNEL_NM'], market['BRAND_NM'], currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
             #         fieldnames = list(listing_data['LISTING'][0].keys())
             #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -893,7 +918,10 @@ def run(file_name):
             #         for listing in listing_data['LISTING']:
             #             writer.writerow(listing)
             
-            # if 0 < len(listing_data['UNLINK_LISTING']):
+            if 0 < len(listing_data['UNLINK_LISTING']):
+                write_log("Update unlinked listing data of {0} from {1} to DB...".format(market['CHANNEL_NAME'], market['BRAND_NAME']), log_filename)
+                update_unlink_listing_to_db(listing_data['UNLINK_LISTING'], conn)
+                write_log(str(listing_data['UNLINK_LISTING']), log_filename)
             #     with open('unlinked_listing.{0}.{1}.{2}.csv'.format(market['CHANNEL_NM'], market['BRAND_NM'], currentDT.strftime("%Y%m%d_%H%M%S")), 'w', newline='', encoding='UTF8') as csvfile:
             #         fieldnames = list(listing_data['UNLINK_LISTING'][0].keys())
             #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -901,10 +929,7 @@ def run(file_name):
             #         writer.writeheader()
             #         for listing in listing_data['UNLINK_LISTING']:
             #             writer.writerow(listing)
-
-            write_log("Update listing data of {0} from {1} to DB...".format(market['CHANNEL_NAME'], market['BRAND_NAME']), log_filename)
-            update_listing_to_db(listing_data['LISTING'], conn)
-            update_unlink_listing_to_db(listing_data['UNLINK_LISTING'], conn)
+            
     except FileNotFoundError as error:
         write_log('{0}: {1}'.format(error.filename, error.strerror), log_filename)
     finally:
@@ -912,24 +937,21 @@ def run(file_name):
     
 
 if __name__ == '__main__':
-    # read_from_file()
-    USER_NAME = 'jungbomp@usc.edu'
-    PASSWORD = 'asdf1231003'
-    input_file_name = ''
-    SHOW_BROWSER = True
+    USER_NAME = ''
+    PASSWORD = ''
+    SHOW_BROWSER = False
 
-    TEST = 1
+    TEST = 0
 
     if TEST != 1:
-        if len(sys.argv) < 4:
-            print('Usage: python LinkCreator.py <Input_file_name.csv> [USER_ID] [PASSWORD] [0/1:SHOW_BROWSER]')
+        if len(sys.argv) < 3:
+            print('Usage: python SellBriteExtractor.py [USER_ID] [PASSWORD] [0/1:SHOW_BROWSER]')
             exit()
 
-        input_file_name = sys.argv[1]
-        USER_NAME = sys.argv[2]
-        PASSWORD = sys.argv[3]
+        USER_NAME = sys.argv[1]
+        PASSWORD = sys.argv[2]
         try:
-            SHOW_BROWSER = True if sys.argv[4] == '1' else False
+            SHOW_BROWSER = True if sys.argv[3] == '1' else False
         except IndexError as error:
             SHOW_BROWSER = False
 
@@ -937,19 +959,13 @@ if __name__ == '__main__':
     currentDT = datetime.datetime.now()
     currentDT_str = currentDT.strftime("%Y%m%d_%H%M%S")
 
-    log_filename = 'SellBriteExtractor_{0}.log'.format(currentDT_str)
+    log_filename = './log/SellBriteExtractor_{0}.log'.format(currentDT_str)
     print("Log file name: {0}".format(log_filename))
 
     write_log("Start SellBrite Extraction on {0}".format(currentDT), log_filename)
     
     try:
-        if os.path.isdir(input_file_name):
-            files = os.listdir(input_file_name)
-            for file_name in files:
-                input_file = os.path.join(input_file_name, file_name)
-                write_log("generated {0} links from input file {1}".format(run(input_file), input_file), log_filename)
-        else:
-            write_log("generated {0} links from input file {1}".format(run(input_file_name), input_file_name), log_filename)
+        run()
     except Exception as exception:
         traceback.print_exc()
     finally:
