@@ -28,13 +28,14 @@ currentDT_str = None
 def login(username_str, password_str, show_ui):
     global session
     if show_ui == False:
-        session = Session('chromedriver',
+        session = Session('/opt/DataExtractor/chromedriver',
                       browser='chrome',
                       default_timeout=15,
                       webdriver_options={'arguments': ['headless',
                                                        'disable-gpu',
                                                        '--ignore-certificate-errors',
-                                                       '--ignore-ssl-errors']})
+                                                       '--ignore-ssl-errors'],
+                                        'binary_location': '/usr/bin/google-chrome'})
     else:
         session = Session('chromedriver',
                       browser='chrome',
@@ -221,35 +222,21 @@ def extract_shopify_listing_product_from_tr_ele(tr_ele, ids):
         return product, False
 
 
-def extract_ebay_listing_product_from_tr_ele(tr_ele, ids):
+def extract_ebay_listing_product_from_tr_ele(item, ids):
     product = {
-        "LISTING_ITEM_ID": tr_ele.find('td', attrs={"data-key":"sku"}).text.strip('\n '),
-        "LISTING_SKU": tr_ele.find('td', attrs={"data-key":"sku"}).text.strip('\n '),
-        "LISTING_PRODUCT_NAME": tr_ele.find('td', attrs={"data-key":"title"}).find('a').text.strip('\n '),
-        "LISTING_PRODUCT_QTY": tr_ele.find('td', attrs={"data-key":"quantity"}).text.strip('\n '),
-        "LISTING_PRODUCT_PRICE": tr_ele.find('td', attrs={"data-key":"buy_it_now"}).text.strip('\n $'),
+        "LISTING_ITEM_ID": item['sku'],
+        "LISTING_SKU": item['sku'],
+        "LISTING_PRODUCT_NAME": item['variation_full_title'],
+        "LISTING_PRODUCT_QTY": item['quantity'],
+        "LISTING_PRODUCT_PRICE": item['start_price'],
         "LISTING_PRODUCT_FBM": 'Y'
     }
 
-    if 0 == len(product['LISTING_PRODUCT_QTY']):
-        product['LISTING_PRODUCT_QTY'] = 0
-    else:
-        product['LISTING_PRODUCT_QTY'] = int(product['LISTING_PRODUCT_QTY'])
-
-    if 0 == len(product['LISTING_PRODUCT_PRICE']):
-        product['LISTING_PRODUCT_PRICE'] = 0.0
-    else:
-        product['LISTING_PRODUCT_PRICE'] = float(product['LISTING_PRODUCT_PRICE'])
-
-    if tr_ele.find('td', attrs={'data-key': 'icon'}).find('div', class_='linked-icon') != None:
-        linkstr = tr_ele.find('td', attrs={'data-key': 'icon'}).find('a', class_='link').attrs['href']
-        
+    if item['linked'] == True:
         try:
-            product["STD_SKU"] = ids[int(linkstr[linkstr.find('/', 2)+1:linkstr.rfind('/')])]
+            product["STD_SKU"] = ids[item['product_id']]
         except KeyError as error:
-            response = session.get('https://app.sellbrite.com'+linkstr)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            product["STD_SKU"] = soup.find('input', class_='form-control', attrs={'name': 'product[sku]'}).attrs['value']
+            print('Error')
             
         return product, True
     else:
@@ -391,22 +378,51 @@ def extract_listing(ids, market, listing_dic, unlinked_listing_dic):
                         unlinked_products.append(product)
             elif market['CHANNEL_NAME'].lower() == 'ebay':
                 items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
-                parent = None
-                for i in range(len(items)-1, -1, -1):
-                    item = items[i]
+                for item in items:
                     data_key = json.loads(item['data-key'])
-                    if 'id' in data_key and data_key['id'] == parent:
-                        parent = None
+                    if 'id' not in data_key:
                         continue
 
-                    parent = data_key['parent']
-                    product, isLinked = extract_ebay_listing_product_from_tr_ele(item, ids)
-                    product["MARKET_ID"] = market['MARKET_ID']
+                    response = session.get('https://app.sellbrite.com/api/listings/{0}'.format(data_key['id']))
+                    listing_item = response.json()
+                    variations = listing_item['variations']
+                    if len(variations):
+                        for variation in variations:
+                            product, isLinked = extract_ebay_listing_product_from_tr_ele(variation, ids)
+                            product["MARKET_ID"] = market['MARKET_ID']
 
-                    if isLinked:
-                        linked_products.append(product)
+                            if product["LISTING_SKU"] == None:
+                                continue
+
+                            if isLinked:
+                                linked_products.append(product)
+                            else:
+                                unlinked_products.append(product)
                     else:
-                        unlinked_products.append(product)
+                        product = {
+                            "LISTING_ITEM_ID": listing_item['sku'],
+                            "LISTING_SKU": listing_item['sku'],
+                            "LISTING_PRODUCT_NAME": listing_item['title'],
+                            "LISTING_PRODUCT_QTY": listing_item['quantity'],
+                            "LISTING_PRODUCT_PRICE": listing_item['price'],
+                            "LISTING_PRODUCT_FBM": 'Y',
+                            "MARKET_ID": market['MARKET_ID']
+                        }
+
+                        if product["LISTING_SKU"] == None:
+                            continue
+
+                        if listing_item['linked'] == True:
+                            try:
+                                if listing_item['product_id'] == None:
+                                    continue
+                                product["STD_SKU"] = ids[listing_item['product_id']]
+                            except KeyError as error:
+                                print('Error')
+                                
+                            linked_products.append(product)
+                        else:
+                            unlinked_products.append(product)
             elif market['CHANNEL_NAME'].lower() == 'walmart':
                 items = soup.find('table', class_='slickgrid-table').find('tbody').find_all('tr')
                 for item in items:
