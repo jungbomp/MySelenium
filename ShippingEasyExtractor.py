@@ -43,13 +43,14 @@ def openConnection():
 def login(username_str, password_str, show_ui):
     global session
     if show_ui == False:
-        session = Session('chromedriver',
+        session = Session('/opt/DataExtractor/chromedriver',
                       browser='chrome',
                       default_timeout=15,
                       webdriver_options={'arguments': ['headless',
                                                        'disable-gpu',
                                                        '--ignore-certificate-errors',
-                                                       '--ignore-ssl-errors']})
+                                                       '--ignore-ssl-errors'],
+                                        'binary_location': '/usr/bin/google-chrome'})
     else:
         session = Session('chromedriver',
                       browser='chrome',
@@ -299,8 +300,6 @@ def run():
 
 
 if __name__ == '__main__':
-    USER_NAME = 'jcsky.jaik@gmail.com'
-    PASSWORD = 'Happy10*'
     SHOW_BROWSER = False
 
     TEST = 1
@@ -320,6 +319,11 @@ if __name__ == '__main__':
     currentDT = datetime.datetime.now()
 
     login(USER_NAME, PASSWORD, SHOW_BROWSER)
+
+    btnEle = session.driver.find_element_by_css_selector('a.owner-filter-option')
+    if btnEle != None and btnEle.text.lower() == 'All Orders'.lower():
+        btnEle.click()
+
     currentDT = datetime.datetime.now()
     currentDT_str = currentDT.strftime("%Y%m%d_%H%M%S")
 
