@@ -17,6 +17,7 @@ import datetime
 import csv
 import traceback
 import time
+import re
 
 import pymysql.cursors
 
@@ -75,19 +76,28 @@ def login(username_str, password_str, show_ui):
 
 def extract_orders(market_meta):
     orders = []
-    order_item = []
+    orders_items = []
     pageNum = 0
     time_out_cnt = 0
-    while True:
-        try:
+    
+    try:
+        session.driver.get(('https://app1.shippingeasy.com/shipments'))
+
+        div_ele = WebDriverWait(session.driver, 20).until(EC.presence_of_element_located((By.ID, 'owner-filter-toggle')))
+        if -1 < div_ele.find_element_by_tag_name('span').text.strip().lower().find('all'):
+            div_ele.find_element_by_tag_name('span').click()
+            _ = WebDriverWait(session.driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'table.shipments')))
+            print("Page is ready!")
+
+        while True:
             session.transfer_driver_cookies_to_session()
             pageNum = pageNum + 1
-            order_url = 'https://app1.shippingeasy.com/orders?page={0}&paging=t&search_form%5Bper_page%5D=200'.format(pageNum)
-            response = session.get(order_url)
-            session.driver.get(order_url)
+            shipments_url = 'https://app1.shippingeasy.com/shipments?search_form%5Bage%5D=0_1440&search_form%5Bper_page%5D=200&page={0}&paging=t'.format(pageNum)
+            
+            session.driver.get(shipments_url)
             try:
-                table_ele = WebDriverWait(session.driver, 20).until(EC.presence_of_element_located((By.XPATH, "//table[@class='se-table instant-rate-enabled orders']")))
-                print("Page is ready!")
+                table_ele = WebDriverWait(session.driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'table.shipments')))
+                print('Load page {0}\n'.format(pageNum))
 
                 tr_eles = table_ele.find_element_by_tag_name('tbody').find_elements_by_tag_name('tr')
                 
@@ -97,57 +107,81 @@ def extract_orders(market_meta):
                 for tr_ele in tr_eles:
                     soup = BeautifulSoup(tr_ele.get_attribute('innerHTML').strip('\n '), 'html.parser')
                     td_eles = soup.find_all('td')
+                    market_str = td_eles[2].text.strip('\n ').lower()
+                    orders.append({
+                        "CHANNEL_ORDER_NO": td_eles[5].find('span').text.strip('\n '),
+                        "ORDER_QTY": td_eles[7].text.strip('\n '),
+                        "SHIPPING_PRICE": td_eles[8].text.strip('\n $'),
+                        "MARKET_ID": get_channel_from_market_str(market_meta, market_str),
+                        "TRACKING_NO": td_eles[13].find('a').text.strip('\n '),
+                        "ACT_URL": td_eles[5].find('span').attrs['data-popover-url']
+                    })
 
-                    product = {
-                        "CHANNEL_ORDER_NO": td_eles[6].find('a', class_='order-link').text.strip('\n '),
-                        "ORDER_QTY": td_eles[10].text.strip('\n '),
-                        "ORDER_PRICE": td_eles[8].text.strip('\n $'),
-                        "SHIPPING_PRICE": td_eles[9].text.strip('\n $')
-                    }
+                    # date_str = td_eles[7].text.strip('\n ').lower()
+                    # product["ORDER_DATE"] = get_date_from_date_str(date_str)
 
-                    date_str = td_eles[7].text.strip('\n ').lower()
-                    product["ORDER_DATE"] = get_date_from_date_str(date_str)
+                    # market_str = td_eles[5].text.strip('\n ').lower()
+                    # product['MARKET_ID'] = get_channel_from_market_str(market_meta, market_str)
 
-                    market_str = td_eles[5].text.strip('\n ').lower()
-                    product['MARKET_ID'] = get_channel_from_market_str(market_meta, market_str)
+                    # orders.append(product)
 
-                    orders.append(product)
-
-                    if td_eles[11].find('a', class_='multi-item-toggle') != None:
-                        session.transfer_driver_cookies_to_session()
-                        anchor_id = td_eles[11].find('a', class_='multi-item-toggle').attrs['id']
-                        response = session.get('https://app1.shippingeasy.com/orders/line_items/{0}'.format(anchor_id[anchor_id.rfind('_')+1:]))
-                        item_trs = BeautifulSoup(response.text, 'html.parser').find('table', class_='table table-bordered').find('tbody').find_all('tr')
-                        for item_tr in item_trs:
-                            item_td_eles = item_tr.find_all('td')
-                            order_item.append({
-                                "CHANNEL_ORDER_NO": product["CHANNEL_ORDER_NO"],
-                                "MARKET_ID": product["MARKET_ID"],
-                                "LISTING_SKU": item_td_eles[3].text.strip('\n :'),
-                                "UNIT_PRICE": item_td_eles[4].text.strip('\n $'),
-                                "UNIT_QTY": item_td_eles[1].text.strip('\n ')
-                            })
-                    else:
-                        order_item.append({
-                            "CHANNEL_ORDER_NO": product["CHANNEL_ORDER_NO"],
-                            "MARKET_ID": product["MARKET_ID"],
-                            "LISTING_SKU": td_eles[12].text.strip('\n :'),
-                            "UNIT_PRICE": product["ORDER_PRICE"],
-                            "UNIT_QTY": 1
-                        })
+                    # if td_eles[11].find('a', class_='multi-item-toggle') != None:
+                    #     session.transfer_driver_cookies_to_session()
+                    #     anchor_id = td_eles[11].find('a', class_='multi-item-toggle').attrs['id']
+                    #     response = session.get('https://app1.shippingeasy.com/orders/line_items/{0}'.format(anchor_id[anchor_id.rfind('_')+1:]))
+                    #     item_trs = BeautifulSoup(response.text, 'html.parser').find('table', class_='table table-bordered').find('tbody').find_all('tr')
+                    #     for item_tr in item_trs:
+                    #         item_td_eles = item_tr.find_all('td')
+                    #         order_item.append({
+                    #             "CHANNEL_ORDER_NO": product["CHANNEL_ORDER_NO"],
+                    #             "MARKET_ID": product["MARKET_ID"],
+                    #             "LISTING_SKU": item_td_eles[3].text.strip('\n :'),
+                    #             "UNIT_PRICE": item_td_eles[4].text.strip('\n $'),
+                    #             "UNIT_QTY": item_td_eles[1].text.strip('\n ')
+                    #         })
+                    # else:
+                    #     order_item.append({
+                    #         "CHANNEL_ORDER_NO": product["CHANNEL_ORDER_NO"],
+                    #         "MARKET_ID": product["MARKET_ID"],
+                    #         "LISTING_SKU": td_eles[12].text.strip('\n :'),
+                    #         "UNIT_PRICE": product["ORDER_PRICE"],
+                    #         "UNIT_QTY": 1
+                    #     })
             except TimeoutException:
                 print("Loading took too much time!")
                 break
-        except Exception as exception:
-            traceback.print_exc()
-            break
 
-    return orders, order_item
+        for order in orders:
+            session.driver.get(('https://app1.shippingeasy.com/act{0}'.format(order["ACT_URL"])))
+
+            div_ele = WebDriverWait(session.driver, 20).until(EC.presence_of_element_located((By.ID, 'act_orders_show')))
+            soup =  BeautifulSoup(div_ele.get_attribute('innerHTML').strip('\n '), 'html.parser')
+            
+            right_div = soup.find('dt', text=re.compile(r'Order Total')).parent
+            order["ORDER_PRICE"] = right_div.find_all('dd')[1].text.strip('\n $')
+            order["ORDER_SHIPPING_PRICE"] = right_div.find_all('dd')[2].text.strip('\n $')
+            order["ORDER_DATE"] = get_date_from_date_str(soup.find('dt', text=re.compile(r'Order date')).next_sibling.next_sibling.text)
+
+            items_tr_eles = soup.find(id='order-line-items').find('tbody').find_all('tr')
+            for tr_ele in items_tr_eles:
+                td_eles = tr_ele.find_all('td')
+                orders_items.append({
+                    "CHANNEL_ORDER_NO": order["CHANNEL_ORDER_NO"],
+                    "MARKET_ID": order["MARKET_ID"],
+                    "LISTING_SKU": td_eles[1].text.strip('\n '),
+                    "UNIT_PRICE": td_eles[5].text.strip('\n $'),
+                    "UNIT_QTY": td_eles[0].text.strip('\n ')
+                })
+    except Exception as exception:
+        traceback.print_exc()
+
+    return orders, orders_items
 
 
 def get_date_from_date_str(date_str):
     month_str = date_str[:date_str.find(' ')].lower()[:3]
-    day_str = date_str[date_str.find(' ')+1:]
+    day_str = date_str[date_str.find(' ')+1:date_str.rfind(',')]
+    year_str = date_str[date_str.rfind(' ')+1:]
 
     month_str_to_num = {
         'jan': 1,
@@ -164,7 +198,7 @@ def get_date_from_date_str(date_str):
         'dec': 12
     }
 
-    d = datetime.date(datetime.date.today().year, month_str_to_num[month_str], int(day_str))
+    d = datetime.date(int(year_str), month_str_to_num[month_str], int(day_str))
     return d.strftime('%Y%m%d')
 
 
@@ -300,7 +334,9 @@ def run():
 
 
 if __name__ == '__main__':
-    SHOW_BROWSER = False
+    USER_NAME = ''
+    PASSWORD = ''
+    SHOW_BROWSER = True
 
     TEST = 1
 
